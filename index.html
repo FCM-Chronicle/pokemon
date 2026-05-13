@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>PokeWeb Online</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; }
+        body { background: var(--bg); color: white; font-family: 'Noto Sans KR', sans-serif; margin: 0; overflow-x: hidden; }
+        h1, h2, .pixel { font-family: 'Press Start 2P', cursive; }
+        #auth-screen { position: fixed; inset: 0; background: var(--bg); z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        input { padding: 10px; margin: 5px; border-radius: 5px; border: none; }
+        button { padding: 10px 20px; cursor: pointer; background: var(--accent); color: white; border: none; border-radius: 5px; }
+        .tab-bar { position: fixed; bottom: 0; width: 100%; display: flex; background: var(--card); }
+        .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border-top: 2px solid transparent; }
+        .tab.active { border-top: 2px solid var(--accent); background: #0f3460; }
+        .screen { padding: 20px; padding-bottom: 80px; display: none; }
+        .screen.active { display: block; }
+        .poke-card { background: var(--card); padding: 15px; border-radius: 10px; margin-bottom: 10px; text-align: center; }
+        .hp-bar { height: 10px; background: #444; border-radius: 5px; overflow: hidden; margin: 10px 0; }
+        .hp-fill { height: 100%; transition: width 0.3s, background 0.3s; }
+        @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-20px) rotate(20deg); } }
+        .ball-throw { animation: bounce 0.5s 3; }
+    </style>
+</head>
+<body>
+
+<div id="auth-screen">
+    <h1 style="color: var(--accent); margin-bottom: 30px;">POKEMON WEB</h1>
+    <input type="text" id="login-id" placeholder="아이디">
+    <input type="password" id="login-pw" placeholder="비밀번호">
+    <button onclick="attemptLogin()">접속 / 회원가입</button>
+</div>
+
+<div id="main-ui" style="display:none;">
+    <div id="wild" class="screen active">
+        <select id="region-select" onchange="changeRegion()"></select>
+        <div id="wild-display" class="poke-card"></div>
+        <div id="wild-controls">
+            <button onclick="startCatchBattle()">⚔️ 배틀 후 포획</button>
+            <button onclick="throwBall()">🔴 포켓볼 던지기 (<span id="ball-count">5</span>/5)</button>
+            <button onclick="nextWild()">➡️ 다음 포켓몬</button>
+        </div>
+    </div>
+    
+    <div id="pvp" class="screen">
+        <h3>현재 접속자</h3>
+        <div id="player-list"></div>
+    </div>
+
+    <div id="team" class="screen"></div>
+    <div id="pokedex" class="screen"></div>
+    <div id="ranking" class="screen"></div>
+
+    <div class="tab-bar">
+        <div class="tab active" onclick="showTab('wild')">🌿 야생</div>
+        <div class="tab" onclick="showTab('pvp')">👥 대전</div>
+        <div class="tab" onclick="showTab('team')">🎒 내 팀</div>
+        <div class="tab" onclick="showTab('pokedex')">📖 도감</div>
+        <div class="tab" onclick="showTab('ranking')">🏆 랭킹</div>
+    </div>
+</div>
+
+<script>
+    let ws;
+    let myData = JSON.parse(localStorage.getItem('player_data')) || null;
+    let pokeCache = JSON.parse(localStorage.getItem('poke_cache')) || {};
+
+    const TYPE_CHART = { /* PokeAPI 기반 상성 데이터 로드 필요 */ };
+
+    function attemptLogin() {
+        ws = new WebSocket(`ws://${location.host}`);
+        ws.onopen = () => {
+            ws.send(JSON.stringify({
+                type: 'register_login',
+                username: document.getElementById('login-id').value,
+                password: document.getElementById('login-pw').value
+            }));
+        };
+        ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (data.type === 'auth_success') {
+                initGame(data.playerId, data.playerName);
+            } else if (data.type === 'auth_fail') {
+                alert(data.message);
+            } else {
+                handleServerMessage(data);
+            }
+        };
+    }
+
+    function initGame(id, name) {
+        if (!myData || myData.id !== id) {
+            myData = {
+                id, name, team: [], box: [], pokedex: [], badges: [], lastLogin: new Date().toISOString()
+            };
+            saveData();
+        }
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('main-ui').style.display = 'block';
+        ws.send(JSON.stringify({ type: 'join', playerId: id, playerName: name, team: myData.team }));
+        nextWild();
+        renderTeam();
+    }
+
+    function saveData() {
+        localStorage.setItem('player_data', JSON.stringify(myData));
+        localStorage.setItem('poke_cache', JSON.stringify(pokeCache));
+    }
+
+    // 전투 데미지 공식 (클라이언트 전용)
+    function calculateDamage(attacker, defender, move) {
+        const typeMult = 1.0; // TYPE_CHART[move.type][defender.types] 로직 적용
+        const levelMod = attacker.level / 50;
+        const base = (attacker.stats.attack / defender.stats.defense) * move.power;
+        const rand = Math.random() * (1 - 0.85) + 0.85;
+        return Math.floor(base * typeMult * rand * levelMod);
+    }
+
+    // 포획 로직
+    let ballCount = 5;
+    function throwBall() {
+        if (ballCount <= 0) return alert("포켓몬이 도망갔습니다!");
+        ballCount--;
+        document.getElementById('ball-count').innerText = ballCount;
+        
+        // CSS 애니메이션 트리거 로직...
+        const catchProb = 0.1; // 기본 10% 예시
+        if (Math.random() < catchProb) {
+            alert("포획 성공!");
+            // myData.box.push(...) 처리
+        }
+    }
+
+    function handleServerMessage(data) {
+        switch(data.type) {
+            case 'player_list': renderPlayers(data.players); break;
+            case 'ranking_update': renderRanking(data.ranking); break;
+            case 'challenged': showChallengeModal(data); break;
+            // PvP 턴 동기화 로직...
+        }
+    }
+
+    function showTab(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        event.currentTarget.classList.add('active');
+    }
+
+    // 기타 PokeAPI fetch 및 UI 렌더링 함수들...
+</script>
+</body>
+</html>

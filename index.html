@@ -2,211 +2,59 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokémon Web PvP</title>
+    <title>PokeWeb: Legacy Online</title>
+    <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-color: #1a1a2e; --card-color: #16213e; --accent: #e94560;
-            --common: #9e9e9e; --uncommon: #4caf50; --rare: #2196f3; --legendary: #ff9800; --mythical: #9c27b0;
-        }
-        body { background: var(--bg-color); color: white; font-family: 'Noto Sans KR', sans-serif; margin: 0; overflow-x: hidden; }
-        .pixel { font-family: 'Press Start 2P', cursive; font-size: 0.7rem; }
-        
-        /* Layout */
-        #app { display: flex; flex-direction: column; height: 100vh; }
-        #screen { flex: 1; overflow-y: auto; padding-bottom: 70px; }
-        #tabs { position: fixed; bottom: 0; width: 100%; display: flex; background: #0f3460; height: 60px; }
-        .tab-btn { flex: 1; border: none; background: none; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 0.8rem; }
-        .tab-btn.active { background: var(--accent); }
-
-        /* Login Modal */
-        #login-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-        .modal { background: var(--card-color); padding: 2rem; border-radius: 10px; text-align: center; width: 300px; }
-        input { width: 100%; padding: 10px; margin: 10px 0; background: #0f3460; border: 1px solid var(--accent); color: white; }
-
-        /* Battle Scene */
-        #battle-overlay { position: fixed; inset: 0; background: var(--bg-color); z-index: 500; display: none; flex-direction: column; }
-        .hp-bar-container { width: 150px; height: 10px; background: #444; border-radius: 5px; }
-        .hp-bar-fill { height: 100%; border-radius: 5px; transition: width 0.5s; }
-        
-        /* Animations */
-        @keyframes throw { 
-            0% { transform: translate(-200px, 200px) rotate(0deg); }
-            50% { transform: translate(100px, -100px) rotate(180deg); }
-            100% { transform: translate(0, 0) rotate(360deg); }
-        }
-        .ball-throwing { animation: throw 0.8s ease-out; }
-    </style>
 </head>
 <body>
+    <div id="app">
+        <main id="view-port">
+            </main>
 
-<div id="app">
-    <div id="login-overlay">
-        <div class="modal">
-            <h2 class="pixel">POKEMON ONLINE</h2>
-            <input type="text" id="login-id" placeholder="아이디">
-            <input type="password" id="login-pw" placeholder="비밀번호">
-            <button onclick="game.login()" class="tab-btn active" style="width:100%; height:40px; margin-top:10px">접속</button>
+        <div id="battle-scene" class="hidden">
+            <div class="battle-top">
+                <div class="unit-info opponent">
+                    <div class="name-bar"><span id="opp-name">---</span> <span id="opp-lv">Lv.0</span></div>
+                    <div class="hp-track"><div id="opp-hp-fill" class="hp-fill"></div></div>
+                </div>
+                <img id="opp-sprite" src="" alt="">
+            </div>
+            <div class="battle-bottom">
+                <img id="player-sprite" src="" alt="">
+                <div class="unit-info player">
+                    <div class="name-bar"><span id="p-name">---</span> <span id="p-lv">Lv.0</span></div>
+                    <div class="hp-track"><div id="p-hp-fill" class="hp-fill"></div></div>
+                    <div class="exp-track"><div id="p-exp-fill" class="exp-fill"></div></div>
+                </div>
+            </div>
+            <div id="battle-log">전투가 시작되었습니다!</div>
+            <div id="battle-menu">
+                <div id="move-list"></div>
+                <div id="sub-menu">
+                    <button id="btn-catch">🔴 포켓볼</button>
+                    <button id="btn-run">🏃 도망</button>
+                </div>
+            </div>
+        </div>
+
+        <nav id="tab-bar">
+            <button onclick="game.ui.changeTab('wild')">🌿 야생</button>
+            <button onclick="game.ui.changeTab('pvp')">👥 대전</button>
+            <button onclick="game.ui.changeTab('team')">🎒 팀</button>
+            <button onclick="game.ui.changeTab('pokedex')">📖 도감</button>
+            <button onclick="game.ui.changeTab('rank')">🏆 랭킹</button>
+        </nav>
+    </div>
+
+    <div id="auth-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h1 class="pixel">POKEMON</h1>
+            <input type="text" id="login-id" placeholder="ID">
+            <input type="password" id="login-pw" placeholder="PASSWORD">
+            <button onclick="game.auth.login()">접속</button>
         </div>
     </div>
 
-    <div id="screen">
-        </div>
-
-    <div id="tabs">
-        <button class="tab-btn" onclick="game.changeTab('wild')">🌿 야생</button>
-        <button class="tab-btn" onclick="game.changeTab('pvp')">👥 대전</button>
-        <button class="tab-btn" onclick="game.changeTab('team')">🎒 팀</button>
-        <button class="tab-btn" onclick="game.changeTab('pokedex')">📖 도감</button>
-        <button class="tab-btn" onclick="game.changeTab('rank')">🏆 랭킹</button>
-    </div>
-</div>
-
-<div id="battle-overlay">
-    </div>
-
-<script>
-// --- 핵심 게임 로직 ---
-const game = {
-    ws: null,
-    player: null,
-    cache: JSON.parse(localStorage.getItem('poke_cache') || '{}'),
-    state: { currentTab: 'wild', currentOpponent: null, isBattle: false },
-    
-    // 전설/환상 리스트
-    legendaries: [144,145,146,150,243,244,245,249,250,377,378,379,380,381,382,383,384,480,481,482,483,484,485,486,487,488,491,492,493],
-    mythicals: [151,251,385,386,489,490],
-
-    async init() {
-        this.loadPlayerData();
-        if (this.player) {
-            document.getElementById('login-overlay').style.display = 'none';
-            this.connectServer();
-            this.changeTab('wild');
-        }
-    },
-
-    login() {
-        const id = document.getElementById('login-id').value;
-        const pw = document.getElementById('login-pw').value; // MVP에선 단순 저장용
-        if (!id) return alert("아이디를 입력하세요");
-        
-        this.player = {
-            id: crypto.randomUUID(),
-            name: id,
-            pw: pw,
-            team: [], box: [], pokedex: [], badges: [],
-            lastLogin: new Date().toISOString()
-        };
-        this.savePlayerData();
-        location.reload();
-    },
-
-    savePlayerData() { localStorage.setItem('player_data', JSON.stringify(this.player)); },
-    loadPlayerData() { this.player = JSON.parse(localStorage.getItem('player_data')); },
-
-    connectServer() {
-        this.ws = new WebSocket(`ws://${location.host}`);
-        this.ws.onopen = () => {
-            this.ws.send(JSON.stringify({
-                type: 'join',
-                playerId: this.player.id,
-                playerName: this.player.name,
-                team: this.player.team
-            }));
-        };
-        this.ws.onmessage = (e) => this.handleServerMessage(JSON.parse(e.data));
-    },
-
-    handleServerMessage(data) {
-        switch(data.type) {
-            case 'player_list': this.renderPvP(data.players); break;
-            case 'challenged': this.showChallenge(data); break;
-            case 'accepted': this.startBattle(data.opponentTeam, data.opponentId); break;
-            case 'turn_action': this.processOpponentTurn(data.action); break;
-            case 'ranking_update': this.renderRank(data.ranking); break;
-        }
-    },
-
-    // --- 포켓몬 데이터 처리 ---
-    async getPokemon(id) {
-        if (this.cache[id]) return this.cache[id];
-        
-        try {
-            const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
-            const d = await res.json();
-            const rarity = this.mythicals.includes(id) ? 'MYTHICAL' : 
-                          this.legendaries.includes(id) ? 'LEGENDARY' : 
-                          d.base_experience > 200 ? 'RARE' : 
-                          d.base_experience > 100 ? 'UNCOMMON' : 'COMMON';
-
-            const poke = {
-                id: d.id, name: d.name,
-                types: d.types.map(t => t.type.name),
-                stats: d.stats.map(s => ({ name: s.stat.name, value: s.base_stat })),
-                sprites: d.sprites.other['official-artwork'].front_default || d.sprites.front_default,
-                rarity: rarity
-            };
-            this.cache[id] = poke;
-            localStorage.setItem('poke_cache', JSON.stringify(this.cache));
-            return poke;
-        } catch (e) { console.error("PokeAPI 에러", e); return null; }
-    },
-
-    // --- 전투 및 포획 시스템 ---
-    async spawnWild() {
-        const area = document.getElementById('area-select')?.value || 'forest';
-        // 지역별 ID 로직 생략 (요약: 사양에 따른 ID 랜덤 선택)
-        const randomId = Math.floor(Math.random() * 493) + 1;
-        const poke = await this.getPokemon(randomId);
-        this.renderWild(poke);
-    },
-
-    throwBall(poke) {
-        let attempts = parseInt(sessionStorage.getItem('catch_attempts') || '0');
-        if (attempts >= 5) return alert("포켓몬이 도망갔습니다!");
-        
-        attempts++;
-        sessionStorage.setItem('catch_attempts', attempts);
-        
-        // 포획 확률 계산 (기본 확률 * 보정치)
-        const baseProb = { COMMON: 0.1, UNCOMMON: 0.07, RARE: 0.04, LEGENDARY: 0.02, MYTHICAL: 0.01 };
-        let chance = baseProb[poke.rarity];
-        // HP 보정 등 적용...
-        
-        const success = Math.random() < chance;
-        if (success) {
-            alert(`${poke.name} 포획 성공!`);
-            this.player.pokedex.push(poke.id);
-            this.player.box.push({ ...poke, level: 5, currentHp: 100 }); // 간략화
-            this.savePlayerData();
-            this.spawnWild();
-        } else {
-            alert(`포획 실패! (남은 횟수: ${5 - attempts})`);
-        }
-    },
-
-    // --- UI 렌더링 (Tab System) ---
-    changeTab(tab) {
-        this.state.currentTab = tab;
-        const screen = document.getElementById('screen');
-        // 각 탭에 맞는 HTML 생성 및 삽입
-        if (tab === 'wild') this.spawnWild();
-        if (tab === 'team') this.renderTeam();
-        // ...
-    },
-
-    // --- 배틀 로직 ---
-    startBattle(opponentTeam, opponentId) {
-        this.state.isBattle = true;
-        this.state.currentOpponent = opponentId;
-        document.getElementById('battle-overlay').style.display = 'flex';
-        // 배틀 UI 초기화 및 루프 시작
-    }
-};
-
-game.init();
-</script>
+    <script src="script.js"></script>
 </body>
 </html>

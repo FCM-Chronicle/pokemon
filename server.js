@@ -11,6 +11,9 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const FIGHT_FILE = path.join(__dirname, 'fight.json');
+const POKE_FILE = path.join(__dirname, 'poke.json');
+const GITHUB_TOKEN = process.env.POKEGAME; // 발급받은 GitHub API 키 변수 활용
+
 const PORT = 3000;
 
 // fight.json 초기화 (비동기 함수를 사용하기 위해 즉시 실행 함수로 감쌈)
@@ -21,6 +24,9 @@ const PORT = 3000;
 })();
 if (!fs.existsSync(FIGHT_FILE)) {
     fs.writeFileSync(FIGHT_FILE, JSON.stringify({ ranking: [], battleLog: [] }));
+}
+if (!fs.existsSync(POKE_FILE)) {
+    fs.writeFileSync(POKE_FILE, JSON.stringify({}));
 }
 
 app.use(express.static(path.join(__dirname)));
@@ -51,6 +57,8 @@ wss.on('connection', (ws) => {
                 clients.set(playerId, { ws, name: data.playerName, team: data.team, status: 'online' });
                 broadcastPlayerList();
                 sendRanking(ws);
+                // 서버의 poke.json 캐시 데이터 전송
+                readPokeCache().then(cache => ws.send(JSON.stringify({ type: "sync_cache", cache })));
                 break;
 
             case "challenge":
@@ -78,6 +86,10 @@ wss.on('connection', (ws) => {
                 if(clients.has(playerId)) clients.get(playerId).team = data.team;
                 broadcastPlayerList();
                 break;
+
+            case "update_cache":
+                writePokeCache(data.cache);
+                break;
         }
     });
 
@@ -102,6 +114,19 @@ function broadcastPlayerList() {
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) client.send(msg);
     });
+}
+
+async function readPokeCache() {
+    try {
+        const data = await fsPromises.readFile(POKE_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (e) { return {}; }
+}
+
+async function writePokeCache(cache) {
+    try {
+        await fsPromises.writeFile(POKE_FILE, JSON.stringify(cache, null, 2));
+    } catch (e) { console.error("Cache write error:", e); }
 }
 
 async function readFightData() {

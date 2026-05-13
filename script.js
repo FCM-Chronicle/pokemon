@@ -3,16 +3,11 @@ const game = {
         player: null,
         activeTab: 'wild',
         currentBattle: null, // { opponent, type: 'wild' | 'pvp', isPlayerTurn: true }
+        pokeCache: {}, // poke.json으로부터 동기화될 데이터
     },
 
-    // --- 1. 데이터 저장소 및 캐시 매니저 ---
+    // --- 1. 데이터 저장소 매니저 ---
     db: {
-        getPokemonCache() {
-            return JSON.parse(localStorage.getItem('poke_cache') || '{}');
-        },
-        savePokemonCache(data) {
-            localStorage.setItem('poke_cache', JSON.stringify(data));
-        },
         getPlayerData() {
             return JSON.parse(localStorage.getItem('player_data'));
         },
@@ -20,15 +15,19 @@ const game = {
             localStorage.setItem('player_data', JSON.stringify(data)); // 로컬 스토리지에 저장
             // 서버에 팀 변경 사항 알림
             if (game.network.socket && game.network.socket.readyState === WebSocket.OPEN) game.network.send({ type: 'update_team', team: data.team });
+        },
+        savePokemonCacheToServer(data) {
+            game.state.pokeCache = data;
+            if (game.network.socket && game.network.socket.readyState === WebSocket.OPEN) {
+                game.network.send({ type: 'update_cache', cache: data });
+            }
         }
     },
 
     // --- 2. PokeAPI 호출 ---
     async fetchPokemon(id) {
-        const cache = this.db.getPokemonCache();
-        
-        // 이미 호출한 정보가 있다면 캐시에서 반환 (스프라이트는 URL이므로 그대로 사용)
-        if (cache[id]) return cache[id];
+        // 서버에서 받아온 메모리 내 캐시 확인
+        if (this.state.pokeCache[id]) return this.state.pokeCache[id];
 
         // 없으면 API 호출
         try {
@@ -45,8 +44,8 @@ const game = {
                 spriteUrl: data.sprites.other['official-artwork'].front_default || data.sprites.front_default
             };
 
-            cache[id] = pokeData;
-            this.db.savePokemonCache(cache);
+            this.state.pokeCache[id] = pokeData;
+            this.db.savePokemonCacheToServer(this.state.pokeCache);
             return pokeData;
         } catch (e) {
             console.error("API 재시도 중...", e);

@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const fsPromises = require('fs/promises'); // fs.promises 추가
 
 const app = express();
 const server = http.createServer(app);
@@ -12,7 +13,12 @@ const wss = new WebSocketServer({ server });
 const FIGHT_FILE = path.join(__dirname, 'fight.json');
 const PORT = 3000;
 
-// fight.json 초기화
+// fight.json 초기화 (비동기 함수를 사용하기 위해 즉시 실행 함수로 감쌈)
+(async () => {
+    if (!fs.existsSync(FIGHT_FILE)) {
+        await fsPromises.writeFile(FIGHT_FILE, JSON.stringify({ ranking: [], battleLog: [] }));
+    }
+})();
 if (!fs.existsSync(FIGHT_FILE)) {
     fs.writeFileSync(FIGHT_FILE, JSON.stringify({ ranking: [], battleLog: [] }));
 }
@@ -31,7 +37,13 @@ wss.on('connection', (ws) => {
     let playerId = null;
 
     ws.on('message', (message) => {
-        const data = JSON.parse(message);
+        let data;
+        try {
+            data = JSON.parse(message);
+        } catch (e) {
+            console.error("Invalid JSON received:", e.message);
+            return;
+        }
 
         switch (data.type) {
             case "join":
@@ -92,13 +104,34 @@ function broadcastPlayerList() {
     });
 }
 
-function sendRanking(ws) {
-    const data = JSON.parse(fs.readFileSync(FIGHT_FILE));
+async function readFightData() {
+    try {
+        const data = await fsPromises.readFile(FIGHT_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        if (error.code === 'ENOENT') { // 파일이 없을 경우 초기 데이터 반환
+            return { ranking: [], battleLog: [] };
+        }
+        console.error("Error reading fight data:", error);
+        return { ranking: [], battleLog: [] }; // 에러 발생 시 기본값 반환
+    }
+}
+
+async function writeFightData(data) {
+    try {
+        await fsPromises.writeFile(FIGHT_FILE, JSON.stringify(data, null, 2));
+    } catch (error) {
+        console.error("Error writing fight data:", error);
+    }
+}
+
+async function sendRanking(ws) {
+    const data = await readFightData();
     ws.send(JSON.stringify({ type: "ranking_update", ranking: data.ranking }));
 }
 
-function updateFightData({ winnerId, loserId, winnerName, loserName }) {
-    const data = JSON.parse(fs.readFileSync(FIGHT_FILE));
+async function updateFightData({ winnerId, loserId, winnerName, loserName }) {
+    const data = await readFightData();
     
     const updateEntry = (id, name, isWinner) => {
         let p = data.ranking.find(r => r.playerId === id);
@@ -112,7 +145,7 @@ function updateFightData({ winnerId, loserId, winnerName, loserName }) {
         p.lastUpdated = new Date().toISOString();
     };
 
-    updateEntry(winnerId, winnerName, true);
+    updateEntry(winnerId, winnerName, true); 
     updateEntry(loserId, loserName, false);
 
     data.battleLog.unshift({ battleId: uuidv4(), winner: winnerName, loser: loserName, timestamp: new Date().toISOString() });
@@ -120,7 +153,7 @@ function updateFightData({ winnerId, loserId, winnerName, loserName }) {
 
     data.ranking.sort((a, b) => b.winRate - a.winRate || b.win - a.win);
     
-    fs.writeFileSync(FIGHT_FILE, JSON.stringify(data));
+    await writeFightData(data);
     
     const updateMsg = JSON.stringify({ type: "ranking_update", ranking: data.ranking });
     wss.clients.forEach(c => c.send(updateMsg));

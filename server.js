@@ -1,134 +1,129 @@
 const express = require('express');
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket } = require('ws');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
-const port = 3000;
-
-// 데이터 파일 초기화
-const FILES = {
-  users: './users.json',
-  fight: './fight.json'
-};
-
-Object.values(FILES).forEach(f => {
-  if (!fs.existsSync(f)) {
-    fs.writeFileSync(f, JSON.stringify(f === FILES.users ? {} : { ranking: [], battleLog: [] }));
-  }
-});
-
-app.use(express.static('public'));
-
-const server = app.listen(port, () => console.log(`Server running at http://localhost:${port}`));
+const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-let clients = new Map(); // id -> { ws, playerName, team }
+const FIGHT_FILE = path.join(__dirname, 'fight.json');
+const PORT = 3000;
+
+// fight.json 초기화
+if (!fs.existsSync(FIGHT_FILE)) {
+    fs.writeFileSync(FIGHT_FILE, JSON.stringify({ ranking: [], battleLog: [] }));
+}
+
+app.use(express.static(path.join(__dirname)));
+
+let clients = new Map(); // id -> { ws, name, team }
 
 wss.on('connection', (ws) => {
-  let myId = null;
-
-  ws.on('message', (message) => {
-    const data = JSON.parse(message);
-
-    switch (data.type) {
-      case 'register_login':
-        handleAuth(ws, data);
-        break;
-
-      case 'join':
-        myId = data.playerId;
-        clients.set(myId, { ws, name: data.playerName, team: data.team });
-        broadcastPlayerList();
-        sendRanking(ws);
-        break;
-
-      case 'challenge':
-        relay(data.targetId, { type: 'challenged', challengerId: myId, challengerName: clients.get(myId).name, challengerTeam: data.team });
-        break;
-
-      case 'accept':
-        relay(data.challengerId, { type: 'accepted', opponentId: myId, opponentTeam: data.team });
-        break;
-
-      case 'decline':
-        relay(data.challengerId, { type: 'declined', opponentId: myId });
-        break;
-
-      case 'turn_action':
-        relay(data.opponentId, { type: 'turn_action', action: data.action });
-        break;
-
-      case 'battle_result':
-        updateRanking(data);
-        break;
+    if (clients.size >= 10) {
+        ws.send(JSON.stringify({ type: "full", message: "서버가 가득 찼습니다 (최대 10명)" }));
+        ws.close();
+        return;
     }
-  });
 
-  ws.on('close', () => {
-    if (myId) {
-      clients.delete(myId);
-      broadcastPlayerList();
-    }
-  });
+    let playerId = null;
+
+    ws.on('message', (message) => {
+        const data = JSON.parse(message);
+
+        switch (data.type) {
+            case "join":
+                playerId = data.playerId;
+                clients.set(playerId, { ws, name: data.playerName, team: data.team, status: 'online' });
+                broadcastPlayerList();
+                sendRanking(ws);
+                break;
+
+            case "challenge":
+                relay(data.targetId, { type: "challenged", challengerId: playerId, challengerName: clients.get(playerId).name, challengerTeam: clients.get(playerId).team });
+                break;
+
+            case "accept":
+                clients.get(playerId).status = 'battle';
+                clients.get(data.challengerId).status = 'battle';
+                relay(data.challengerId, { type: "accepted", opponentId: playerId, opponentTeam: clients.get(playerId).team });
+                broadcastPlayerList();
+                break;
+
+            case "turn_action":
+                relay(data.opponentId, { type: "turn_action", action: data.action });
+                break;
+
+            case "battle_result":
+                updateFightData(data);
+                if(clients.has(playerId)) clients.get(playerId).status = 'online';
+                broadcastPlayerList();
+                break;
+                
+            case "update_team":
+                if(clients.has(playerId)) clients.get(playerId).team = data.team;
+                broadcastPlayerList();
+                break;
+        }
+    });
+
+    ws.on('close', () => {
+        if (playerId) {
+            clients.delete(playerId);
+            broadcastPlayerList();
+        }
+    });
 });
 
-function handleAuth(ws, { username, password }) {
-  const users = JSON.parse(fs.readFileSync(FILES.users));
-  if (users[username]) {
-    if (users[username].password === password) {
-      ws.send(JSON.stringify({ type: 'auth_success', playerId: users[username].id, playerName: username }));
-    } else {
-      ws.send(JSON.stringify({ type: 'auth_fail', message: '비밀번호가 틀렸습니다.' }));
+function relay(targetId, msg) {
+    const target = clients.get(targetId);
+    if (target && target.ws.readyState === WebSocket.OPEN) {
+        target.ws.send(JSON.stringify(msg));
     }
-  } else {
-    const newId = uuidv4();
-    users[username] = { id: newId, password };
-    fs.writeFileSync(FILES.users, JSON.stringify(users));
-    ws.send(JSON.stringify({ type: 'auth_success', playerId: newId, playerName: username }));
-  }
 }
 
 function broadcastPlayerList() {
-  const players = Array.from(clients.entries()).map(([id, p]) => ({ id, name: p.name, team: p.team }));
-  const msg = JSON.stringify({ type: 'player_list', players });
-  clients.forEach(c => c.ws.send(msg));
-}
-
-function relay(targetId, data) {
-  const target = clients.get(targetId);
-  if (target) target.ws.send(JSON.stringify(data));
+    const players = Array.from(clients.entries()).map(([id, p]) => ({ id, name: p.name, team: p.team, status: p.status }));
+    const msg = JSON.stringify({ type: "player_list", players });
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) client.send(msg);
+    });
 }
 
 function sendRanking(ws) {
-  const fight = JSON.parse(fs.readFileSync(FILES.fight));
-  ws.send(JSON.stringify({ type: 'ranking_update', ranking: fight.ranking }));
+    const data = JSON.parse(fs.readFileSync(FIGHT_FILE));
+    ws.send(JSON.stringify({ type: "ranking_update", ranking: data.ranking }));
 }
 
-function updateRanking({ winnerId, loserId, winnerName, loserName }) {
-  const fight = JSON.parse(fs.readFileSync(FILES.fight));
-  const updateEntry = (id, name, result) => {
-    let p = fight.ranking.find(r => r.playerId === id);
-    if (!p) {
-      p = { playerId: id, playerName: name, win: 0, lose: 0, draw: 0, totalBattles: 0, winRate: 0, lastUpdated: "" };
-      fight.ranking.push(p);
-    }
-    if (result === 'win') p.win++; else p.lose++;
-    p.totalBattles++;
-    p.winRate = parseFloat((p.win / p.totalBattles * 100).toFixed(2));
-    p.lastUpdated = new Date().toISOString();
-  };
+function updateFightData({ winnerId, loserId, winnerName, loserName }) {
+    const data = JSON.parse(fs.readFileSync(FIGHT_FILE));
+    
+    const updateEntry = (id, name, isWinner) => {
+        let p = data.ranking.find(r => r.playerId === id);
+        if (!p) {
+            p = { playerId: id, playerName: name, win: 0, lose: 0, totalBattles: 0, winRate: 0, lastUpdated: "" };
+            data.ranking.push(p);
+        }
+        if (isWinner) p.win++; else p.lose++;
+        p.totalBattles = p.win + p.lose;
+        p.winRate = ((p.win / p.totalBattles) * 100).toFixed(2);
+        p.lastUpdated = new Date().toISOString();
+    };
 
-  updateEntry(winnerId, winnerName, 'win');
-  updateEntry(loserId, loserName, 'lose');
+    updateEntry(winnerId, winnerName, true);
+    updateEntry(loserId, loserName, false);
 
-  fight.battleLog.unshift({ battleId: uuidv4(), winner: winnerName, loser: loserName, timestamp: new Date().toISOString() });
-  if (fight.battleLog.length > 50) fight.battleLog.pop();
+    data.battleLog.unshift({ battleId: uuidv4(), winner: winnerName, loser: loserName, timestamp: new Date().toISOString() });
+    data.battleLog = data.battleLog.slice(0, 50);
 
-  fight.ranking.sort((a, b) => b.winRate - a.winRate || b.win - a.win);
-  fs.writeFileSync(FILES.fight, JSON.stringify(fight));
-
-  const msg = JSON.stringify({ type: 'ranking_update', ranking: fight.ranking });
-  clients.forEach(c => c.ws.send(msg));
+    data.ranking.sort((a, b) => b.winRate - a.winRate || b.win - a.win);
+    
+    fs.writeFileSync(FIGHT_FILE, JSON.stringify(data));
+    
+    const updateMsg = JSON.stringify({ type: "ranking_update", ranking: data.ranking });
+    wss.clients.forEach(c => c.send(updateMsg));
 }
+
+server.listen(PORT, () => console.log(`서버 실행 중: http://localhost:${PORT}`));

@@ -1,0 +1,26 @@
+:root {
+    --bg: #1a1a2e; --card: #16213e; --accent: #e94560;
+    --hp-high: #4caf50; --hp-mid: #ffeb3b; --hp-low: #f44336;
+    /* 타입 색상 */
+    --fire: #F08030; --water: #6890F0; --grass: #78C850; --electric: #F8D030;
+}
+
+body { margin: 0; background: var(--bg); color: white; font-family: 'Noto Sans KR', sans-serif; }
+.pixel { font-family: 'Press Start 2P', cursive; }
+.hidden { display: none !important; }
+
+/* 배틀 씬 배치 */
+#battle-scene { position: fixed; inset: 0; background: #000; z-index: 1000; display: flex; flex-direction: column; }
+.battle-top { flex: 1; position: relative; background: radial-gradient(#4a4a4a, #111); }
+.unit-info { background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; width: 180px; }
+.hp-track { height: 10px; background: #333; border-radius: 5px; overflow: hidden; margin-top: 5px; }
+.hp-fill { height: 100%; transition: width 0.5s; }
+
+/* 포켓볼 흔들림 애니메이션 */
+@keyframes shake {
+    0% { transform: rotate(0); }
+    25% { transform: rotate(-20deg); }
+    75% { transform: rotate(20deg); }
+    100% { transform: rotate(0); }
+}
+.ball-throwing { animation: shake 0.3s infinite; width: 50px; }

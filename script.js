@@ -1,3 +1,5 @@
+// script.js
+
 const game = {
     state: {
         player: null,

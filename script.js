@@ -6,6 +6,7 @@ var game = {
         activeTab: 'wild',
         currentBattle: null,
         pokeCache: {},
+        evoChainCache: {},   // evolution chain 캐시
     },
 
     db: {
@@ -73,13 +74,102 @@ var game = {
         }
     },
 
+    // ── 진화 체인 가져오기 ──────────────────────────────
+    // 반환값: [base_id, stage1_id, stage2_id] (없으면 null)
+    async fetchEvoChain(pokemonId) {
+        if (this.state.evoChainCache[pokemonId]) return this.state.evoChainCache[pokemonId];
+        try {
+            const specRes  = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${pokemonId}`);
+            if (!specRes.ok) return null;
+            const specData = await specRes.json();
+
+            const chainRes  = await fetch(specData.evolution_chain.url);
+            if (!chainRes.ok) return null;
+            const chainData = await chainRes.json();
+
+            // 체인 파싱: 최대 3단계
+            const chain = [];
+            let node = chainData.chain;
+            while (node) {
+                const url = node.species.url;
+                const id  = parseInt(url.split('/').filter(Boolean).pop(), 10);
+                chain.push(id);
+                node = node.evolves_to?.[0] || null;
+            }
+            // chain = [base, evo1, evo2] (길이 1~3)
+
+            // 이 포켓몬이 속한 체인의 인덱스 찾아 캐시 (chain 전체에 적용)
+            chain.forEach(id => { this.state.evoChainCache[id] = chain; });
+            return chain;
+        } catch (e) {
+            return null;
+        }
+    },
+
+    // 진화 가능 여부 체크 후 진화 실행
+    // 15렙: 1진화, 30렙: 2진화
+    async checkEvolution(pokemon) {
+        const level = pokemon.level || 1;
+        if (level !== 15 && level !== 30) return false;
+
+        const chain = await game.fetchEvoChain(pokemon.id);
+        if (!chain || chain.length < 2) return false;
+
+        const currentIdx = chain.indexOf(pokemon.id);
+        if (currentIdx < 0) return false;
+
+        let targetIdx = -1;
+        if (level === 15 && currentIdx === 0 && chain.length >= 2) targetIdx = 1;
+        if (level === 30 && currentIdx <= 1 && chain.length >= 3) targetIdx = 2;
+        if (targetIdx < 0) return false;
+
+        const evoId   = chain[targetIdx];
+        const evoData = await game.fetchPokemon(evoId);
+        if (!evoData) return false;
+
+        const prevName = pokemon.nickname || pokemon.name;
+
+        // 스탯/이름/타입/스프라이트 업데이트, 닉네임·레벨·경험치·기술 유지
+        pokemon.id        = evoData.id;
+        pokemon.name      = evoData.name;
+        pokemon.nameEn    = evoData.nameEn;
+        pokemon.types     = evoData.types;
+        pokemon.stats     = evoData.stats;
+        pokemon.spriteUrls= evoData.spriteUrls;
+        pokemon.spriteUrl = evoData.spriteUrls[0];
+        // HP 비율 유지
+        pokemon.currentHp = evoData.stats.hp;
+
+        // 기술 풀 업데이트 (기존 기술은 유지)
+        const oldMoves     = pokemon.moves || [];
+        pokemon.allMovePool= evoData.allMovePool;
+        pokemon.moves      = oldMoves; // 기존 기술 그대로 유지
+
+        game.ui.showEvolutionEffect(prevName, pokemon);
+        return true;
+    },
+
+    // ── 야생 포켓몬 ID 선택 ──────────────────────────────
+    // 팀 최고 레벨 기준으로 진화 단계 포켓몬 필터링
     getWildPokemonId(playerMaxLevel) {
         const lv = playerMaxLevel || 5;
-        if (lv < 15)       return Math.floor(Math.random() * 50) + 1;
-        else if (lv < 30)  return Math.floor(Math.random() * 151) + 1;
-        else if (lv < 50)  return Math.floor(Math.random() * 251) + 1;
-        else if (lv < 70)  return Math.floor(Math.random() * 386) + 1;
-        else               return Math.floor(Math.random() * 493) + 1;
+
+        // 세대별 범위
+        let maxId;
+        if (lv < 15)       maxId = 50;
+        else if (lv < 30)  maxId = 151;
+        else if (lv < 50)  maxId = 251;
+        else if (lv < 70)  maxId = 386;
+        else               maxId = 493;
+
+        return Math.floor(Math.random() * maxId) + 1;
+    },
+
+    // 팀 최고 레벨 반환
+    getTeamMaxLevel() {
+        const team = game.state.player?.team || [];
+        if (team.length === 0) return 1;
+        return Math.max(...team.map(p => p.level || 1));
     },
 
     async checkLevelUp(pokemon, expGain) {
@@ -91,9 +181,19 @@ var game = {
             pokemon.exp -= expNeeded;
             pokemon.level = prevLevel + 1;
             game.ui.log(`${pokemon.nickname || pokemon.name}이(가) 레벨 ${pokemon.level}이 되었다!`);
+
+            // 기술 습득 (10렙마다)
             if (pokemon.level % 10 === 0) {
                 await game.learnNewMove(pokemon);
             }
+
+            // 진화 체크 (15렙, 30렙)
+            const evolved = await game.checkEvolution(pokemon);
+            if (evolved) {
+                game.db.savePlayerData(game.state.player);
+                game.ui.renderActiveTab();
+            }
+
             return true;
         }
         return false;
@@ -130,16 +230,35 @@ var game = {
                 return;
             }
 
-            const wildId = game.getWildPokemonId(playerPoke.level);
-            const wildPoke = await game.fetchPokemon(wildId);
+            const teamMaxLv = game.getTeamMaxLevel();
+            const wildId    = game.getWildPokemonId(teamMaxLv);
+            const wildPoke  = await game.fetchPokemon(wildId);
             if (!wildPoke) return;
 
             const wildPokeCopy = { ...wildPoke, moves: [...(wildPoke.moves || [])] };
+
+            // 팀 최고렙 기준 진화 단계 조정
+            // 15렙 이상이면 1진화 포켓몬도 나올 수 있음 (50% 확률)
+            // 30렙 이상이면 2진화 포켓몬도 나올 수 있음 (30% 확률)
+            if (teamMaxLv >= 30 && Math.random() < 0.30) {
+                const chain = await game.fetchEvoChain(wildId);
+                if (chain && chain.length >= 3) {
+                    const evo2Data = await game.fetchPokemon(chain[2]);
+                    if (evo2Data) Object.assign(wildPokeCopy, { ...evo2Data, moves: [...(evo2Data.moves || [])] });
+                }
+            } else if (teamMaxLv >= 15 && Math.random() < 0.50) {
+                const chain = await game.fetchEvoChain(wildId);
+                if (chain && chain.length >= 2) {
+                    const evo1Data = await game.fetchPokemon(chain[1]);
+                    if (evo1Data) Object.assign(wildPokeCopy, { ...evo1Data, moves: [...(evo1Data.moves || [])] });
+                }
+            }
+
             wildPokeCopy.currentHp = wildPokeCopy.stats.hp;
 
-            const pLv = playerPoke.level || 5;
-            const minLv = Math.max(2, pLv - 3);
-            const maxLv = pLv + 3;
+            const pLv    = playerPoke.level || 5;
+            const minLv  = Math.max(2, pLv - 3);
+            const maxLv  = pLv + 3;
             wildPokeCopy.level = Math.floor(Math.random() * (maxLv - minLv + 1)) + minLv;
 
             if (!playerPoke.currentHp || playerPoke.currentHp <= 0) {
@@ -172,8 +291,11 @@ var game = {
             if (b.opponent.currentHp <= 0) {
                 const expGain = Math.floor(b.opponent.stats['special-attack'] * b.opponent.level / 7);
                 game.ui.log(`야생 ${b.opponent.name}이(가) 쓰러졌다! 경험치 ${expGain} 획득!`);
-                const leveled = await game.checkLevelUp(b.playerPoke, expGain);
-                if (leveled) game.db.savePlayerData(game.state.player);
+
+                // ★ 경험치는 항상 저장 (레벨업 여부 무관)
+                await game.checkLevelUp(b.playerPoke, expGain);
+                game.db.savePlayerData(game.state.player);
+
                 setTimeout(() => this.endBattle(true), 1500);
                 return;
             }
@@ -208,11 +330,11 @@ var game = {
 
             game.ui.log(`포켓볼을 던졌다!`);
 
-            const hpRatio = b.opponent.currentHp / b.opponent.stats.hp;
-            const baseCatch = 0.25 + (1 - hpRatio) * 0.5;
+            const hpRatio    = b.opponent.currentHp / b.opponent.stats.hp;
+            const baseCatch  = 0.25 + (1 - hpRatio) * 0.5;
             const attemptBonus = Math.min(0.1, b.catchAttempts * 0.02);
-            const catchRate = Math.min(0.75, baseCatch + attemptBonus);
-            const success = Math.random() < catchRate;
+            const catchRate  = Math.min(0.75, baseCatch + attemptBonus);
+            const success    = Math.random() < catchRate;
 
             const ballEl = document.getElementById('catch-ball-anim');
             if (ballEl) {
@@ -304,9 +426,9 @@ var game = {
         },
 
         calculateDamage(atk, def, movePower, level, typeMod) {
-            const random = 0.85 + Math.random() * 0.15;
+            const random  = 0.85 + Math.random() * 0.15;
             const levelMod = (level || 5) / 50;
-            const safeDef = def || 1;
+            const safeDef  = def || 1;
             return Math.max(1, Math.floor((atk / safeDef) * movePower * typeMod * random * (1 + levelMod)));
         },
 
@@ -355,7 +477,7 @@ var game = {
             const vp = document.getElementById('view-port');
             if (!vp) return;
             const tab = game.state.activeTab;
-            if (tab === 'wild')    this.renderWildTab(vp);
+            if (tab === 'wild')         this.renderWildTab(vp);
             else if (tab === 'team')    this.renderTeamTab(vp);
             else if (tab === 'pokedex') this.renderPokedexTab(vp);
             else if (tab === 'pvp')     this.renderPvpTab(vp);
@@ -369,18 +491,18 @@ var game = {
         applySprites(container) {
             const imgs = (container || document).querySelectorAll('img[data-poke-id]');
             imgs.forEach(img => {
-                const id = parseInt(img.dataset.pokeId, 10);
+                const id     = parseInt(img.dataset.pokeId, 10);
                 const cached = game.state.pokeCache[id];
-                const urls = (cached && cached.spriteUrls) || game.getSpriteUrls(id);
+                const urls   = (cached && cached.spriteUrls) || game.getSpriteUrls(id);
                 game.ui.loadSprite(img, urls);
             });
         },
 
         renderWildTab(container) {
-            const player = game.state.player;
-            const team = player?.team || [];
-            const leadPoke = team[0];
-            const pLv = leadPoke?.level || 5;
+            const player  = game.state.player;
+            const team    = player?.team || [];
+            const leadPoke= team[0];
+            const pLv     = leadPoke?.level || 5;
 
             let zoneText = '초원 (1세대)';
             if (pLv >= 15 && pLv < 30) zoneText = '숲 (1세대 전체)';
@@ -482,14 +604,14 @@ var game = {
 
         renderPokedexTab(container) {
             const allPokes = (game.state.player?.team || []).concat(game.state.player?.box || []);
-            const caught = new Set(allPokes.map(p => p.id));
+            const caught   = new Set(allPokes.map(p => p.id));
             container.innerHTML = `
                 <div class="tab-content pokedex-tab">
                     <h2 class="tab-title pixel">포켓도감</h2>
                     <p class="dex-count">발견: ${caught.size} / 493</p>
                     <div class="dex-grid">
                         ${Array.from({length: 493}, (_, i) => i + 1).map(id => {
-                            const cached = game.state.pokeCache[id];
+                            const cached   = game.state.pokeCache[id];
                             const isCaught = caught.has(id);
                             return `
                                 <div class="dex-cell ${isCaught ? 'caught' : 'unseen'}" title="${cached?.name || '#' + id}">
@@ -511,6 +633,37 @@ var game = {
 
         renderRankTab(container) {
             container.innerHTML = `<div class="tab-content"><h2 class="tab-title pixel">랭킹</h2><p class="empty-hint">랭킹 기능 준비 중!</p></div>`;
+        },
+
+        // ── 진화 연출 ──────────────────────────────
+        showEvolutionEffect(prevName, pokemon) {
+            const existing = document.getElementById('evo-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'evo-overlay';
+            overlay.className = 'modal-overlay evo-overlay';
+            overlay.innerHTML = `
+                <div class="evo-content">
+                    <div class="evo-flash"></div>
+                    <div class="evo-title pixel">진화!</div>
+                    <div class="evo-names">${prevName} → ${pokemon.name}</div>
+                    <img class="evo-sprite" alt="${pokemon.name}" data-poke-id="${pokemon.id}" style="visibility:hidden" />
+                    <div class="evo-types">
+                        ${pokemon.types.map(t => `<span class="type-badge type-${t}">${t}</span>`).join('')}
+                    </div>
+                    <button class="evo-close-btn pixel" onclick="document.getElementById('evo-overlay').remove()">확인</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            game.ui.applySprites(overlay);
+            game.ui.showToast(`${prevName}이(가) ${pokemon.name}(으)로 진화했다!`);
+
+            // 배틀 중이면 UI 업데이트
+            if (game.state.currentBattle) {
+                game.ui.updateBattleUI();
+                game.ui.renderMoveButtons();
+            }
         },
 
         _showMoveLearnPrompt(pokemon, newMove) {
@@ -659,7 +812,7 @@ var game = {
             const tryNext = (idx) => {
                 if (idx >= urls.length) return;
                 const tester = new Image();
-                tester.onload = () => { imgEl.src = urls[idx]; imgEl.style.visibility = 'visible'; };
+                tester.onload  = () => { imgEl.src = urls[idx]; imgEl.style.visibility = 'visible'; };
                 tester.onerror = () => tryNext(idx + 1);
                 tester.src = urls[idx];
             };
@@ -714,12 +867,12 @@ var game = {
                     <p class="switch-sub">어떤 포켓몬과 교체할까요?</p>
                     <div class="switch-list">
                         ${team.map((p, i) => {
-                            const hp     = p.currentHp ?? p.stats.hp;
-                            const maxHp  = p.stats.hp;
-                            const isCurrent = p === b.playerPoke;
-                            const isDead    = hp <= 0;
-                            const hpPct  = Math.max(0, (hp / maxHp) * 100);
-                            const hpColor = hpPct > 50 ? '#4caf50' : hpPct > 20 ? '#ff9800' : '#f44336';
+                            const hp       = p.currentHp ?? p.stats.hp;
+                            const maxHp    = p.stats.hp;
+                            const isCurrent= p === b.playerPoke;
+                            const isDead   = hp <= 0;
+                            const hpPct    = Math.max(0, (hp / maxHp) * 100);
+                            const hpColor  = hpPct > 50 ? '#4caf50' : hpPct > 20 ? '#ff9800' : '#f44336';
                             return `
                                 <button class="switch-btn ${isCurrent ? 'current' : ''} ${isDead ? 'fainted' : ''}"
                                     ${(isCurrent || isDead) ? 'disabled' : `onclick="game.ui._doSwitch(${i}, false)"`}>
@@ -752,12 +905,11 @@ var game = {
             if (!b) return;
             const team = game.state.player.team;
 
-             // 살아있는 포켓몬 없으면 바로 패배
-    const hasAlive = team.some(p => p !== b.playerPoke && (p.currentHp ?? p.stats.hp) > 0);
-    if (!hasAlive) {
-        setTimeout(() => game.battle.endBattle(false), 500);
-        return;
-    }
+            const hasAlive = team.some(p => p !== b.playerPoke && (p.currentHp ?? p.stats.hp) > 0);
+            if (!hasAlive) {
+                setTimeout(() => game.battle.endBattle(false), 500);
+                return;
+            }
             const existing = document.getElementById('switch-overlay');
             if (existing) existing.remove();
 
@@ -770,12 +922,11 @@ var game = {
                     <p class="switch-sub">${b.playerPoke.nickname || b.playerPoke.name}이(가) 쓰러졌습니다!</p>
                     <div class="switch-list">
                         ${team.map((p, i) => {
-                            const hp     = p.currentHp ?? p.stats.hp;
-                            const maxHp  = p.stats.hp;
-                            const isCurrent = p === b.playerPoke;
-                            const isDead    = hp <= 0 
-                            const hpPct  = Math.max(0, (hp / maxHp) * 100);
-                            const hpColor = hpPct > 50 ? '#4caf50' : hpPct > 20 ? '#ff9800' : '#f44336';
+                            const hp       = p.currentHp ?? p.stats.hp;
+                            const maxHp    = p.stats.hp;
+                            const isDead   = hp <= 0;
+                            const hpPct    = Math.max(0, (hp / maxHp) * 100);
+                            const hpColor  = hpPct > 50 ? '#4caf50' : hpPct > 20 ? '#ff9800' : '#f44336';
                             return `
                                 <button class="switch-btn ${isDead ? 'fainted' : ''}"
                                     ${isDead ? 'disabled' : `onclick="game.ui._doSwitch(${i}, true)"`}>

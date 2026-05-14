@@ -22,19 +22,40 @@ const game = {
         }
     },
 
+    // ──────────────────────────────
+    // 포켓몬 API 패치 (4세대 493종, 스프라이트 개선)
+    // ──────────────────────────────
     async fetchPokemon(id) {
         if (this.state.pokeCache[id]) return this.state.pokeCache[id];
         try {
             const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
+            if (!response.ok) throw new Error('API 오류');
             const data = await response.json();
+
+            // 기술 4개를 실제 PokéAPI에서 랜덤하게 가져오기
+            const allMoves = data.moves.map(m => m.move.name);
+            const shuffled = allMoves.sort(() => Math.random() - 0.5);
+            const pickedMoves = shuffled.slice(0, 4);
+
+            // 스프라이트 우선순위: official-artwork → front_default → fallback
+            const sprites = data.sprites;
+            const officialArt = sprites?.other?.['official-artwork']?.front_default;
+            const frontDefault = sprites?.front_default;
+            const animatedSprite = sprites?.versions?.['generation-v']?.['black-white']?.animated?.front_default;
+
+            // official-artwork URL 검증 후 사용
+            let spriteUrl = officialArt || frontDefault || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
+            let spriteAnimated = animatedSprite || frontDefault || spriteUrl;
+
             const pokeData = {
                 id: data.id,
                 name: data.name,
                 types: data.types.map(t => t.type.name),
                 stats: data.stats.reduce((acc, s) => ({ ...acc, [s.stat.name]: s.base_stat }), {}),
-                moves: data.moves.slice(0, 4).map(m => m.move.name),
-                spriteUrl: data.sprites.other['official-artwork'].front_default || data.sprites.front_default,
-                spriteAnimated: data.sprites.versions?.['generation-v']?.['black-white']?.animated?.front_default || data.sprites.front_default
+                moves: pickedMoves,          // 실제 기술 4개
+                allMovePool: allMoves,       // 나중에 레벨업 기술 습득용 풀
+                spriteUrl: spriteUrl,
+                spriteAnimated: spriteAnimated,
             };
             this.state.pokeCache[id] = pokeData;
             this.db.savePokemonCacheToServer(this.state.pokeCache);
@@ -45,22 +66,102 @@ const game = {
         }
     },
 
+    // ──────────────────────────────
+    // 레벨에 따른 야생 포켓몬 ID 범위
+    // 4세대(493종)까지 확장, 초반은 쉬운 포켓몬
+    // ──────────────────────────────
+    getWildPokemonId(playerMaxLevel) {
+        // 플레이어 리드 포켓몬 레벨 기준으로 구역 결정
+        const lv = playerMaxLevel || 5;
+        if (lv < 15) {
+            // 1세대 초반 (1~50)
+            return Math.floor(Math.random() * 50) + 1;
+        } else if (lv < 30) {
+            // 1세대 전체 (1~151)
+            return Math.floor(Math.random() * 151) + 1;
+        } else if (lv < 50) {
+            // 1~2세대 (1~251)
+            return Math.floor(Math.random() * 251) + 1;
+        } else if (lv < 70) {
+            // 1~3세대 (1~386)
+            return Math.floor(Math.random() * 386) + 1;
+        } else {
+            // 1~4세대 (1~493)
+            return Math.floor(Math.random() * 493) + 1;
+        }
+    },
+
+    // ──────────────────────────────
+    // 레벨업 & 기술 습득 시스템
+    // ──────────────────────────────
+    async checkLevelUp(pokemon, expGain) {
+        const prevLevel = pokemon.level || 1;
+        // 간단한 경험치 공식: 레벨업에 필요한 경험치 = 레벨 * 50
+        pokemon.exp = (pokemon.exp || 0) + expGain;
+        const expNeeded = prevLevel * 50;
+
+        if (pokemon.exp >= expNeeded) {
+            pokemon.exp -= expNeeded;
+            pokemon.level = prevLevel + 1;
+            game.ui.log(`${pokemon.nickname || pokemon.name}이(가) 레벨 ${pokemon.level}이 되었다!`);
+
+            // 10레벨마다 새 기술 습득 시도
+            if (pokemon.level % 10 === 0) {
+                await game.learnNewMove(pokemon);
+            }
+            return true;
+        }
+        return false;
+    },
+
+    async learnNewMove(pokemon) {
+        const pool = pokemon.allMovePool || [];
+        if (pool.length === 0) return;
+
+        // 현재 기술에 없는 새 기술 랜덤 선택
+        const currentMoves = pokemon.moves || [];
+        const available = pool.filter(m => !currentMoves.includes(m));
+        if (available.length === 0) return;
+
+        const newMove = available[Math.floor(Math.random() * available.length)];
+
+        if (currentMoves.length < 4) {
+            // 빈 슬롯이 있으면 그냥 습득
+            pokemon.moves.push(newMove);
+            game.ui.showToast(`${pokemon.nickname || pokemon.name}이(가) ${newMove}을(를) 배웠다!`);
+            game.ui.log(`새 기술 [${newMove}] 습득!`);
+        } else {
+            // 4개가 꽉 찼으면 플레이어에게 선택 요청
+            game.ui._showMoveLearnPrompt(pokemon, newMove);
+        }
+    },
+
+    _pendingMoveLearn: null,
+
     battle: {
         async startWildBattle() {
             if (game.state.currentBattle) return;
-            const randomId = Math.floor(Math.random() * 151) + 1;
-            const wildPoke = await game.fetchPokemon(randomId);
-            if (!wildPoke) return;
-
-            const wildPokeCopy = { ...wildPoke };
-            wildPokeCopy.currentHp = wildPokeCopy.stats.hp;
-            wildPokeCopy.level = Math.floor(Math.random() * 15) + 5;
 
             const playerPoke = game.state.player?.team[0];
             if (!playerPoke) {
                 game.ui.showToast("전투 가능한 포켓몬이 없습니다!");
                 return;
             }
+
+            // 플레이어 레벨 기준으로 야생 포켓몬 ID 결정
+            const wildId = game.getWildPokemonId(playerPoke.level);
+            const wildPoke = await game.fetchPokemon(wildId);
+            if (!wildPoke) return;
+
+            const wildPokeCopy = { ...wildPoke, moves: [...(wildPoke.moves || [])] };
+            wildPokeCopy.currentHp = wildPokeCopy.stats.hp;
+
+            // 야생 포켓몬 레벨: 플레이어 레벨 ±3 범위 (최소 2)
+            const pLv = playerPoke.level || 5;
+            const minLv = Math.max(2, pLv - 3);
+            const maxLv = pLv + 3;
+            wildPokeCopy.level = Math.floor(Math.random() * (maxLv - minLv + 1)) + minLv;
+
             if (!playerPoke.currentHp || playerPoke.currentHp <= 0) {
                 playerPoke.currentHp = playerPoke.stats.hp;
             }
@@ -89,9 +190,10 @@ const game = {
             game.ui.updateBattleUI();
 
             if (b.opponent.currentHp <= 0) {
-                game.ui.log(`야생 ${b.opponent.name}이(가) 쓰러졌다!`);
                 const expGain = Math.floor(b.opponent.stats['special-attack'] * b.opponent.level / 7);
-                game.ui.log(`경험치 ${expGain}을 얻었다!`);
+                game.ui.log(`야생 ${b.opponent.name}이(가) 쓰러졌다! 경험치 ${expGain} 획득!`);
+                const leveled = await game.checkLevelUp(b.playerPoke, expGain);
+                if (leveled) game.db.savePlayerData(game.state.player);
                 setTimeout(() => this.endBattle(true), 1500);
                 return;
             }
@@ -119,8 +221,12 @@ const game = {
 
             game.ui.log(`포켓볼을 던졌다!`);
 
+            // 포획률 개선: HP가 낮을수록, 시도 횟수가 많을수록 확률 증가
+            // 최소 25%, 최대 75%
             const hpRatio = b.opponent.currentHp / b.opponent.stats.hp;
-            const catchRate = Math.max(0.1, (1 - hpRatio) * 0.6 + 0.15);
+            const baseCatch = 0.25 + (1 - hpRatio) * 0.5; // HP 0%면 +0.5
+            const attemptBonus = Math.min(0.1, b.catchAttempts * 0.02); // 시도당 +2%, 최대 +10%
+            const catchRate = Math.min(0.75, baseCatch + attemptBonus);
             const success = Math.random() < catchRate;
 
             const ballEl = document.getElementById('catch-ball-anim');
@@ -140,6 +246,7 @@ const game = {
                         nickname: b.opponent.name,
                         level: b.opponent.level,
                         currentHp: b.opponent.currentHp,
+                        exp: 0,
                     };
                     if (game.state.player.team.length < 6) {
                         game.state.player.team.push(caughtPoke);
@@ -255,10 +362,27 @@ const game = {
             else if (tab === 'rank') this.renderRankTab(vp);
         },
 
+        // 스프라이트 에러 핸들링: 실패시 GitHub raw 스프라이트로 폴백
+        getSpriteHtml(poke, className) {
+            const fallback = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${poke.id}.png`;
+            return `<img class="${className}" 
+                src="${poke.spriteUrl}" 
+                alt="${poke.name}"
+                onerror="this.onerror=null; this.src='${fallback}'" />`;
+        },
+
         renderWildTab(container) {
             const player = game.state.player;
             const team = player?.team || [];
             const leadPoke = team[0];
+            const pLv = leadPoke?.level || 5;
+
+            // 현재 구역 표시
+            let zoneText = '초원 (1세대)';
+            if (pLv >= 15 && pLv < 30) zoneText = '숲 (1세대 전체)';
+            else if (pLv >= 30 && pLv < 50) zoneText = '산악 (2세대)';
+            else if (pLv >= 50 && pLv < 70) zoneText = '동굴 (3세대)';
+            else if (pLv >= 70) zoneText = '심층 (4세대)';
 
             container.innerHTML = `
                 <div class="tab-content wild-tab">
@@ -268,11 +392,12 @@ const game = {
                             <div class="grass-layer l2"></div>
                         </div>
                         <div class="scene-content">
+                            <div class="zone-badge">📍 ${zoneText}</div>
                             <div class="player-poke-display">
                                 ${leadPoke ? `
                                     <div class="lobby-poke-card">
                                         <div class="poke-aura type-${leadPoke.types?.[0] || 'normal'}"></div>
-                                        <img class="lobby-sprite" src="${leadPoke.spriteUrl}" alt="${leadPoke.name}" />
+                                        ${this.getSpriteHtml(leadPoke, 'lobby-sprite')}
                                         <div class="poke-info-bar">
                                             <span class="poke-nick">${leadPoke.nickname || leadPoke.name}</span>
                                             <span class="poke-lv">Lv.${leadPoke.level || 1}</span>
@@ -280,11 +405,15 @@ const game = {
                                         <div class="poke-hp-mini">
                                             <div class="hp-mini-fill" style="width:${Math.max(0, (leadPoke.currentHp / leadPoke.stats.hp) * 100)}%"></div>
                                         </div>
+                                        <div class="poke-exp-mini">
+                                            <div class="exp-mini-fill" style="width:${Math.min(100, ((leadPoke.exp || 0) / ((leadPoke.level || 1) * 50)) * 100)}%"></div>
+                                        </div>
                                         ${team.length > 1 ? `
                                             <div class="team-mini-row">
                                                 ${team.slice(1).map(p => `
                                                     <div class="team-mini-ball type-${p.types?.[0] || 'normal'}" title="${p.nickname || p.name}">
-                                                        <img src="${p.spriteUrl}" alt="${p.name}" />
+                                                        <img src="${p.spriteUrl}" alt="${p.name}" 
+                                                            onerror="this.onerror=null;this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${p.id}.png'" />
                                                     </div>
                                                 `).join('')}
                                             </div>
@@ -296,7 +425,7 @@ const game = {
                                 <button class="btn-wild-battle pixel" onclick="game.battle.startWildBattle()">
                                     <span>🌿 야생 포켓몬 만나기</span>
                                 </button>
-                                <p class="wild-hint">151종의 1세대 포켓몬이 기다리고 있다!</p>
+                                <p class="wild-hint">4세대 493종의 포켓몬이 기다리고 있다!</p>
                             </div>
                         </div>
                     </div>
@@ -314,7 +443,7 @@ const game = {
                         ${team.map((p, i) => `
                             <div class="team-card type-bg-${p.types?.[0] || 'normal'}">
                                 <div class="team-card-inner">
-                                    <img class="team-sprite" src="${p.spriteUrl}" alt="${p.name}" />
+                                    ${game.ui.getSpriteHtml(p, 'team-sprite')}
                                     <div class="team-card-info">
                                         <div class="team-poke-name">${p.nickname || p.name}</div>
                                         <div class="team-poke-sub">${p.name} · Lv.${p.level || 1}</div>
@@ -329,6 +458,13 @@ const game = {
                                             <span>공격</span>
                                             <div class="stat-bar-track"><div class="stat-bar-fill atk" style="width:${Math.min(100, p.stats.attack / 2)}%"></div></div>
                                         </div>
+                                        <div class="exp-bar-wrap">
+                                            <span class="exp-label">EXP</span>
+                                            <div class="stat-bar-track"><div class="stat-bar-fill exp" style="width:${Math.min(100, ((p.exp || 0) / ((p.level || 1) * 50)) * 100)}%"></div></div>
+                                        </div>
+                                        <div class="move-list-mini">
+                                            ${(p.moves || []).map(m => `<span class="move-chip">${m}</span>`).join('')}
+                                        </div>
                                     </div>
                                 </div>
                                 ${i === 0 ? '<div class="team-leader-badge">선두</div>' : ''}
@@ -340,18 +476,23 @@ const game = {
         },
 
         renderPokedexTab(container) {
-            const caught = new Set((game.state.player?.team || []).concat(game.state.player?.box || []).map(p => p.id));
+            // 4세대까지 493종
+            const allPokes = (game.state.player?.team || []).concat(game.state.player?.box || []);
+            const caught = new Set(allPokes.map(p => p.id));
             container.innerHTML = `
                 <div class="tab-content pokedex-tab">
                     <h2 class="tab-title pixel">포켓도감</h2>
-                    <p class="dex-count">발견: ${caught.size} / 151</p>
+                    <p class="dex-count">발견: ${caught.size} / 493</p>
                     <div class="dex-grid">
-                        ${Array.from({length: 151}, (_, i) => i + 1).map(id => {
+                        ${Array.from({length: 493}, (_, i) => i + 1).map(id => {
                             const cached = game.state.pokeCache[id];
                             const isCaught = caught.has(id);
                             return `
                                 <div class="dex-cell ${isCaught ? 'caught' : 'unseen'}" title="${cached?.name || '#' + id}">
-                                    ${isCaught && cached ? `<img src="${cached.spriteUrl}" alt="${cached.name}" />` : `<span class="dex-num">${String(id).padStart(3,'0')}</span>`}
+                                    ${isCaught && cached ? 
+                                        `<img src="${cached.spriteUrl}" alt="${cached.name}" 
+                                            onerror="this.onerror=null;this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png'" />` 
+                                        : `<span class="dex-num">${String(id).padStart(3,'0')}</span>`}
                                 </div>
                             `;
                         }).join('')}
@@ -368,10 +509,57 @@ const game = {
         },
 
         // ──────────────────────────────
-        // 스타터 선택 (스프라이트 포함)
+        // 기술 습득 선택 UI (10레벨마다)
+        // ──────────────────────────────
+        _showMoveLearnPrompt(pokemon, newMove) {
+            // 전투 중이면 잠시 후 표시
+            const existing = document.getElementById('move-learn-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'move-learn-overlay';
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal-content move-learn-modal">
+                    <h3 class="pixel">${pokemon.nickname || pokemon.name}이(가) 새 기술을 배우려 한다!</h3>
+                    <p class="new-move-name">✨ <strong>${newMove}</strong></p>
+                    <p class="move-learn-sub">기술을 4개 이상 배울 수 없다. 잊을 기술을 선택하거나 포기하세요.</p>
+                    <div class="move-forget-list">
+                        ${(pokemon.moves || []).map((m, i) => `
+                            <button class="move-forget-btn" onclick="game.ui._confirmForgetMove('${m}', '${newMove}', '${pokemon.nickname || pokemon.name}')">
+                                ${m} 을(를) 잊고 ${newMove} 배우기
+                            </button>
+                        `).join('')}
+                        <button class="move-forget-btn cancel" onclick="document.getElementById('move-learn-overlay').remove()">
+                            ${newMove} 배우지 않기
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            game._pendingMoveLearn = { pokemon, newMove };
+        },
+
+        _confirmForgetMove(oldMove, newMove, pokeName) {
+            const data = game._pendingMoveLearn;
+            if (!data) return;
+            const { pokemon } = data;
+            const idx = pokemon.moves.indexOf(oldMove);
+            if (idx >= 0) {
+                pokemon.moves[idx] = newMove;
+                game.ui.showToast(`${pokeName}이(가) ${oldMove}을(를) 잊고 ${newMove}을(를) 배웠다!`);
+            }
+            game.db.savePlayerData(game.state.player);
+            game._pendingMoveLearn = null;
+            const overlay = document.getElementById('move-learn-overlay');
+            if (overlay) overlay.remove();
+        },
+
+        // ──────────────────────────────
+        // 스타터 선택
         // ──────────────────────────────
         async showStarterSelection() {
-            const starterIds = [1, 4, 7];
+            const starterIds = [1, 4, 7]; // 불꽃, 물, 풀 (1세대)
             const overlay = document.createElement('div');
             overlay.id = 'starter-overlay';
             overlay.className = 'modal-overlay';
@@ -393,7 +581,8 @@ const game = {
             grid.innerHTML = starters.map((p, i) => `
                 <div class="starter-card type-bg-${p.types[0]}" onclick="game.ui._selectStarter(${i})">
                     <div class="starter-poke-aura type-${p.types[0]}"></div>
-                    <img class="starter-sprite" src="${p.spriteUrl}" alt="${p.name}" />
+                    <img class="starter-sprite" src="${p.spriteUrl}" alt="${p.name}"
+                        onerror="this.onerror=null;this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${p.id}.png'" />
                     <div class="starter-name pixel">${p.name}</div>
                     <div class="starter-type-row">
                         ${p.types.map(t => `<span class="type-badge type-${t}">${t}</span>`).join('')}
@@ -413,7 +602,15 @@ const game = {
         _selectStarter(index) {
             const selected = this._starterData[index];
             if (!selected) return;
-            const newPoke = { ...selected, nickname: selected.name, level: 5, currentHp: selected.stats.hp };
+            const newPoke = { 
+                ...selected, 
+                nickname: selected.name, 
+                level: 5, 
+                currentHp: selected.stats.hp,
+                exp: 0,
+                moves: [...(selected.moves || [])],
+                allMovePool: [...(selected.allMovePool || [])],
+            };
             game.state.player.team.push(newPoke);
             game.db.savePlayerData(game.state.player);
 
@@ -451,7 +648,15 @@ const game = {
             document.getElementById('opp-hp-fill').style.width = oppHpPct + '%';
             document.getElementById('opp-hp-fill').style.background = oppHpPct > 50 ? '#4caf50' : oppHpPct > 20 ? '#ff9800' : '#f44336';
 
-            document.getElementById('opp-sprite').src = opp.spriteUrl;
+            // 상대 스프라이트 - 에러 폴백
+            const oppSprite = document.getElementById('opp-sprite');
+            if (oppSprite) {
+                oppSprite.src = opp.spriteUrl;
+                oppSprite.onerror = () => {
+                    oppSprite.onerror = null;
+                    oppSprite.src = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${opp.id}.png`;
+                };
+            }
 
             document.getElementById('p-name').textContent = pp.nickname || pp.name;
             document.getElementById('p-lv').textContent = `Lv.${pp.level || 1}`;
@@ -459,7 +664,15 @@ const game = {
             document.getElementById('p-hp-fill').style.width = ppHpPct + '%';
             document.getElementById('p-hp-fill').style.background = ppHpPct > 50 ? '#4caf50' : ppHpPct > 20 ? '#ff9800' : '#f44336';
 
-            document.getElementById('player-sprite').src = pp.spriteUrl;
+            // 플레이어 스프라이트 - 에러 폴백
+            const playerSprite = document.getElementById('player-sprite');
+            if (playerSprite) {
+                playerSprite.src = pp.spriteUrl;
+                playerSprite.onerror = () => {
+                    playerSprite.onerror = null;
+                    playerSprite.src = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pp.id}.png`;
+                };
+            }
         },
 
         renderMoveButtons() {

@@ -10,20 +10,36 @@ var game = {
     },
 
     db: {
-        getPlayerData() {
+    async getPlayerData(name) {
+        try {
+            const res = await fetch(`/api/players/${encodeURIComponent(name)}`);
+            const json = await res.json();
+            return json.player;
+        } catch (e) {
+            // 서버 실패시 로컬 폴백
             return JSON.parse(localStorage.getItem('player_data'));
-        },
-        savePlayerData(data) {
-            localStorage.setItem('player_data', JSON.stringify(data));
-            if (game.network.socket && game.network.socket.readyState === WebSocket.OPEN)
-                game.network.send({ type: 'update_team', team: data.team });
-        },
-        savePokemonCacheToServer(data) {
-            game.state.pokeCache = data;
-            if (game.network.socket && game.network.socket.readyState === WebSocket.OPEN)
-                game.network.send({ type: 'update_cache', cache: data });
         }
     },
+    async savePlayerData(data) {
+        localStorage.setItem('player_data', JSON.stringify(data));
+        try {
+            await fetch('/api/players', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+        } catch (e) {
+            console.error('서버 저장 실패:', e);
+        }
+        if (game.network.socket && game.network.socket.readyState === WebSocket.OPEN)
+            game.network.send({ type: 'update_team', team: data.team });
+    },
+    savePokemonCacheToServer(data) {
+        game.state.pokeCache = data;
+        if (game.network.socket && game.network.socket.readyState === WebSocket.OPEN)
+            game.network.send({ type: 'update_cache', cache: data });
+    }
+},
 
     getSpriteUrls(pokeId) {
         const padId = String(pokeId).padStart(3, '0');

@@ -185,3 +185,52 @@ async function updateFightData({ winnerId, loserId, winnerName, loserName }) {
 }
 
 server.listen(PORT, () => console.log(`서버 실행 중: http://localhost:${PORT}`));
+
+const GITHUB_OWNER = 'FCM-Chronicle';
+const GITHUB_REPO = 'pokemon';
+const PLAYERS_PATH = 'players.json';
+
+async function readPlayersFromGithub() {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${PLAYERS_PATH}`, {
+        headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json' }
+    });
+    if (!res.ok) return { players: [] };
+    const json = await res.json();
+    const content = Buffer.from(json.content, 'base64').toString('utf8');
+    return { data: JSON.parse(content), sha: json.sha };
+}
+
+async function writePlayersToGithub(players, sha) {
+    const content = Buffer.from(JSON.stringify(players, null, 2)).toString('base64');
+    await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${PLAYERS_PATH}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'update players', content, sha })
+    });
+}
+
+// 플레이어 불러오기
+app.get('/api/players/:id', async (req, res) => {
+    try {
+        const { data } = await readPlayersFromGithub();
+        const player = (data.players || []).find(p => p.name === req.params.id);
+        res.json({ player: player || null });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 플레이어 저장
+app.post('/api/players', express.json(), async (req, res) => {
+    try {
+        const { data, sha } = await readPlayersFromGithub();
+        const players = data.players || [];
+        const idx = players.findIndex(p => p.id === req.body.id);
+        if (idx >= 0) players[idx] = req.body;
+        else players.push(req.body);
+        await writePlayersToGithub({ players }, sha);
+        res.json({ ok: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});

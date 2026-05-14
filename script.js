@@ -23,45 +23,61 @@ const game = {
     },
 
     // ──────────────────────────────
-    // 포켓몬 API 패치 (4세대 493종, 스프라이트 개선)
+    // 스프라이트 URL 목록 (우선순위 순)
+    // 1순위: assets.pokemon.com (학교망에서도 접근 가능)
+    // 2순위: raw.githubusercontent.com (폴백)
+    // ──────────────────────────────
+    getSpriteUrls(pokeId) {
+        const padId = String(pokeId).padStart(3, '0');
+        const gh = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon';
+        return [
+            `https://assets.pokemon.com/assets/cms2/img/pokedex/full/${padId}.png`,
+            `${gh}/other/official-artwork/${pokeId}.png`,
+            `${gh}/${pokeId}.png`,
+        ];
+    },
+
+    // ──────────────────────────────
+    // 포켓몬 API 패치 + 한국어 이름
     // ──────────────────────────────
     async fetchPokemon(id) {
         if (this.state.pokeCache[id]) return this.state.pokeCache[id];
         try {
-            const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
-            if (!response.ok) throw new Error('API 오류');
-            const data = await response.json();
+            const res  = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
+            if (!res.ok) throw new Error('API 오류');
+            const data = await res.json();
 
-            // 기술 4개를 실제 PokéAPI에서 랜덤하게 가져오기
-            const allMoves = data.moves.map(m => m.move.name);
-            const shuffled = allMoves.sort(() => Math.random() - 0.5);
-            const pickedMoves = shuffled.slice(0, 4);
+            // 한국어 이름 가져오기
+            let koName = data.name;
+            try {
+                const specRes  = await fetch(data.species.url);
+                const specData = await specRes.json();
+                const koEntry  = specData.names.find(n => n.language.name === 'ko');
+                if (koEntry) koName = koEntry.name;
+            } catch (_) {}
 
-            // 스프라이트 우선순위: official-artwork → front_default → fallback
-            const sprites = data.sprites;
-            const officialArt = sprites?.other?.['official-artwork']?.front_default;
-            const frontDefault = sprites?.front_default;
-            const animatedSprite = sprites?.versions?.['generation-v']?.['black-white']?.animated?.front_default;
+            // 기술 4개 랜덤
+            const allMoves    = data.moves.map(m => m.move.name);
+            const pickedMoves = allMoves.sort(() => Math.random() - 0.5).slice(0, 4);
 
-            // official-artwork URL 검증 후 사용
-            let spriteUrl = officialArt || frontDefault || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
-            let spriteAnimated = animatedSprite || frontDefault || spriteUrl;
+            const spriteUrls = this.getSpriteUrls(data.id);
 
             const pokeData = {
-                id: data.id,
-                name: data.name,
-                types: data.types.map(t => t.type.name),
-                stats: data.stats.reduce((acc, s) => ({ ...acc, [s.stat.name]: s.base_stat }), {}),
-                moves: pickedMoves,          // 실제 기술 4개
-                allMovePool: allMoves,       // 나중에 레벨업 기술 습득용 풀
-                spriteUrl: spriteUrl,
-                spriteAnimated: spriteAnimated,
+                id:          data.id,
+                name:        koName,
+                nameEn:      data.name,
+                types:       data.types.map(t => t.type.name),
+                stats:       data.stats.reduce((acc, s) => ({ ...acc, [s.stat.name]: s.base_stat }), {}),
+                moves:       pickedMoves,
+                allMovePool: allMoves,
+                spriteUrls:  spriteUrls,
+                spriteUrl:   spriteUrls[0],
             };
             this.state.pokeCache[id] = pokeData;
             this.db.savePokemonCacheToServer(this.state.pokeCache);
             return pokeData;
         } catch (e) {
-            console.error("API 오류:", e);
+            console.error('API 오류:', e);
             return null;
         }
     },
@@ -362,13 +378,22 @@ const game = {
             else if (tab === 'rank') this.renderRankTab(vp);
         },
 
-        // 스프라이트 에러 핸들링: 실패시 GitHub raw 스프라이트로 폴백
+        // img 태그 생성 - src는 비워두고 data-poke-id만 저장
+        // innerHTML 삽입 후 game.ui.applySprites()를 호출해서 실제 로드
         getSpriteHtml(poke, className) {
-            const fallback = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${poke.id}.png`;
-            return `<img class="${className}" 
-                src="${poke.spriteUrl}" 
-                alt="${poke.name}"
-                onerror="this.onerror=null; this.src='${fallback}'" />`;
+            return `<img class="${className}" alt="${poke.name}" data-poke-id="${poke.id}" data-poke-type="official" style="visibility:hidden">`;
+        },
+
+        // DOM에 삽입된 [data-poke-id] img들을 찾아서 loadSprite 적용
+        applySprites(container) {
+            const imgs = (container || document).querySelectorAll('img[data-poke-id]');
+            imgs.forEach(img => {
+                const id = parseInt(img.dataset.pokeId, 10);
+                const cached = game.state.pokeCache[id];
+                // 캐시에 spriteUrls 있으면 사용, 없으면 getSpriteUrls로 생성
+                const urls = (cached && cached.spriteUrls) || game.getSpriteUrls(id);
+                game.ui.loadSprite(img, urls);
+            });
         },
 
         renderWildTab(container) {
@@ -412,8 +437,7 @@ const game = {
                                             <div class="team-mini-row">
                                                 ${team.slice(1).map(p => `
                                                     <div class="team-mini-ball type-${p.types?.[0] || 'normal'}" title="${p.nickname || p.name}">
-                                                        <img src="${p.spriteUrl}" alt="${p.name}" 
-                                                            onerror="this.onerror=null;this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${p.id}.png'" />
+                                                        <img alt="${p.name}" data-poke-id="${p.id}" data-poke-type="mini" style="visibility:hidden" />
                                                     </div>
                                                 `).join('')}
                                             </div>
@@ -431,6 +455,7 @@ const game = {
                     </div>
                 </div>
             `;
+            game.ui.applySprites(container);
         },
 
         renderTeamTab(container) {
@@ -473,6 +498,7 @@ const game = {
                     </div>
                 </div>
             `;
+            game.ui.applySprites(container);
         },
 
         renderPokedexTab(container) {
@@ -489,9 +515,8 @@ const game = {
                             const isCaught = caught.has(id);
                             return `
                                 <div class="dex-cell ${isCaught ? 'caught' : 'unseen'}" title="${cached?.name || '#' + id}">
-                                    ${isCaught && cached ? 
-                                        `<img src="${cached.spriteUrl}" alt="${cached.name}" 
-                                            onerror="this.onerror=null;this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png'" />` 
+                                    ${isCaught ? 
+                                        `<img alt="${cached?.name || id}" data-poke-id="${id}" data-poke-type="mini" style="visibility:hidden" />` 
                                         : `<span class="dex-num">${String(id).padStart(3,'0')}</span>`}
                                 </div>
                             `;
@@ -499,6 +524,7 @@ const game = {
                     </div>
                 </div>
             `;
+            game.ui.applySprites(container);
         },
 
         renderPvpTab(container) {
@@ -581,8 +607,7 @@ const game = {
             grid.innerHTML = starters.map((p, i) => `
                 <div class="starter-card type-bg-${p.types[0]}" onclick="game.ui._selectStarter(${i})">
                     <div class="starter-poke-aura type-${p.types[0]}"></div>
-                    <img class="starter-sprite" src="${p.spriteUrl}" alt="${p.name}"
-                        onerror="this.onerror=null;this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${p.id}.png'" />
+                    <img class="starter-sprite" alt="${p.name}" data-poke-id="${p.id}" data-poke-type="official" style="visibility:hidden" />
                     <div class="starter-name pixel">${p.name}</div>
                     <div class="starter-type-row">
                         ${p.types.map(t => `<span class="type-badge type-${t}">${t}</span>`).join('')}
@@ -595,6 +620,7 @@ const game = {
                 </div>
             `).join('');
 
+            game.ui.applySprites(grid);
             this._starterData = starters;
         },
 
@@ -648,15 +674,8 @@ const game = {
             document.getElementById('opp-hp-fill').style.width = oppHpPct + '%';
             document.getElementById('opp-hp-fill').style.background = oppHpPct > 50 ? '#4caf50' : oppHpPct > 20 ? '#ff9800' : '#f44336';
 
-            // 상대 스프라이트 - 에러 폴백
-            const oppSprite = document.getElementById('opp-sprite');
-            if (oppSprite) {
-                oppSprite.src = opp.spriteUrl;
-                oppSprite.onerror = () => {
-                    oppSprite.onerror = null;
-                    oppSprite.src = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${opp.id}.png`;
-                };
-            }
+            // 스프라이트 로딩: assets.pokemon.com → github 순으로 시도
+            game.ui.loadSprite(document.getElementById('opp-sprite'), opp.spriteUrls || game.getSpriteUrls(opp.id));
 
             document.getElementById('p-name').textContent = pp.nickname || pp.name;
             document.getElementById('p-lv').textContent = `Lv.${pp.level || 1}`;
@@ -664,15 +683,29 @@ const game = {
             document.getElementById('p-hp-fill').style.width = ppHpPct + '%';
             document.getElementById('p-hp-fill').style.background = ppHpPct > 50 ? '#4caf50' : ppHpPct > 20 ? '#ff9800' : '#f44336';
 
-            // 플레이어 스프라이트 - 에러 폴백
-            const playerSprite = document.getElementById('player-sprite');
-            if (playerSprite) {
-                playerSprite.src = pp.spriteUrl;
-                playerSprite.onerror = () => {
-                    playerSprite.onerror = null;
-                    playerSprite.src = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pp.id}.png`;
+            game.ui.loadSprite(document.getElementById('player-sprite'), pp.spriteUrls || game.getSpriteUrls(pp.id));
+        },
+
+        // URL 목록을 순서대로 시도해서 처음 성공한 것을 img에 적용
+        loadSprite(imgEl, urls) {
+            if (!imgEl || !urls.length) return;
+            imgEl.style.visibility = 'hidden';
+
+            const tryNext = (idx) => {
+                if (idx >= urls.length) {
+                    // 모든 URL 실패
+                    console.warn('모든 스프라이트 URL 실패:', urls);
+                    return;
+                }
+                const tester = new Image();
+                tester.onload = () => {
+                    imgEl.src = urls[idx];
+                    imgEl.style.visibility = 'visible';
                 };
-            }
+                tester.onerror = () => tryNext(idx + 1);
+                tester.src = urls[idx];
+            };
+            tryNext(0);
         },
 
         renderMoveButtons() {
@@ -738,3 +771,61 @@ const game = {
         }
     }
 };
+
+// ──────────────────────────────
+// 전역 스프라이트 폴백 함수
+// onerror 인라인에서 따옴표 충돌 없이 호출 가능
+//
+// 폴백 순서:
+//   0 (최초): official-artwork PNG 시도 중 실패
+//          → static front_default PNG 로 교체 (data-fb="1")
+//   1: static도 실패
+//          → 완전히 숨김 처리 (broken image 방지)
+// ──────────────────────────────
+// ──────────────────────────────
+// 구버전 캐시 자동 초기화
+// spriteUrls 없는 캐시는 이미지가 안 나오므로 삭제
+// ──────────────────────────────
+(function migrateCacheIfNeeded() {
+    try {
+        const raw = localStorage.getItem('player_data');
+        if (!raw) return;
+        const player = JSON.parse(raw);
+        // team/box 포켓몬에 spriteUrls 없으면 캐시 초기화 신호
+        const allPokes = (player.team || []).concat(player.box || []);
+        const needsMigration = allPokes.some(p => !p.spriteUrls);
+        if (needsMigration) {
+            // pokeCache만 삭제 (팀/박스 데이터는 유지)
+            allPokes.forEach(p => {
+                if (!p.spriteUrls) {
+                    p.spriteUrls = game.getSpriteUrls(p.id);
+                    p.spriteUrl  = p.spriteUrls[0];
+                }
+            });
+            localStorage.setItem('player_data', JSON.stringify(player));
+            console.log('[마이그레이션] 스프라이트 URL 업데이트 완료');
+        }
+    } catch(e) {}
+})();
+
+function pokeFallback(img) {
+    const id = img.dataset.id;
+    const fb = parseInt(img.dataset.fb || '0', 10);
+
+    if (!id) { img.style.display = 'none'; return; }
+
+    const base = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon';
+
+    if (fb === 0) {
+        // 1차 폴백: 소형 static PNG
+        img.dataset.fb = '1';
+        img.src = `${base}/${id}.png`;
+    } else if (fb === 1) {
+        // 2차 폴백: showdown GIF
+        img.dataset.fb = '2';
+        img.src = `${base}/other/showdown/${id}.gif`;
+    } else {
+        // 모든 폴백 실패 → 숨김
+        img.style.display = 'none';
+    }
+}

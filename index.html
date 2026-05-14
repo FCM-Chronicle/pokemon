@@ -16,8 +16,6 @@
                     <div class="name-bar"><span id="opp-name">---</span> <span id="opp-lv">Lv.0</span></div>
                     <div class="hp-track"><div id="opp-hp-fill" class="hp-fill"></div></div>
                 </div>
-                <!-- src를 빈 문자열로 두면 브라우저가 현재 URL로 요청 → onerror 안 터짐 -->
-                <!-- data-src 패턴으로 실제 로드는 JS에서만 처리 -->
                 <img id="opp-sprite" alt="상대 포켓몬" style="visibility:hidden">
             </div>
             <div class="battle-bottom">
@@ -39,11 +37,11 @@
         </div>
 
         <nav id="tab-bar">
-            <button onclick="game.ui.changeTab('wild')">🌿 야생</button>
-            <button onclick="game.ui.changeTab('pvp')">👥 대전</button>
-            <button onclick="game.ui.changeTab('team')">🎒 팀</button>
-            <button onclick="game.ui.changeTab('pokedex')">📖 도감</button>
-            <button onclick="game.ui.changeTab('rank')">🏆 랭킹</button>
+            <button id="tab-wild">🌿 야생</button>
+            <button id="tab-pvp">👥 대전</button>
+            <button id="tab-team">🎒 팀</button>
+            <button id="tab-pokedex">📖 도감</button>
+            <button id="tab-rank">🏆 랭킹</button>
         </nav>
     </div>
 
@@ -52,11 +50,20 @@
             <h1 class="pixel">POKEMON</h1>
             <input type="text" id="login-id" placeholder="ID">
             <input type="password" id="login-pw" placeholder="PASSWORD">
-            <button onclick="game.auth.login()">접속</button>
+            <button id="btn-login">접속</button>
         </div>
     </div>
 
-    <!-- 파일명을 실제 JS 파일명과 맞춰야 함 (game.js 또는 script.js 중 하나로 통일) -->
     <script src="script.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            document.getElementById('tab-wild').addEventListener('click', function () { game.ui.changeTab('wild'); });
+            document.getElementById('tab-pvp').addEventListener('click', function () { game.ui.changeTab('pvp'); });
+            document.getElementById('tab-team').addEventListener('click', function () { game.ui.changeTab('team'); });
+            document.getElementById('tab-pokedex').addEventListener('click', function () { game.ui.changeTab('pokedex'); });
+            document.getElementById('tab-rank').addEventListener('click', function () { game.ui.changeTab('rank'); });
+            document.getElementById('btn-login').addEventListener('click', function () { game.auth.login(); });
+        });
+    </script>
 </body>
 </html>

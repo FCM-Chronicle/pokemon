@@ -1,6 +1,6 @@
 // script.js
 
-const game = {
+var game = {
     state: {
         player: null,
         activeTab: 'wild',

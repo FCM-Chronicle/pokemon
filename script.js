@@ -1034,35 +1034,36 @@ var game = {
 
     auth: {
         async login() {
-            const id = document.getElementById('login-id').value.trim();
-            const pw = document.getElementById('login-pw').value;
-            if (!id) return;
+    const id = document.getElementById('login-id').value.trim();
+    const pw = document.getElementById('login-pw').value;
+    if (!id) return;
 
-            let player = game.db.getPlayerData();
-            if (!player || player.name !== id) {
-                player = {
-                    id: crypto.randomUUID(),
-                    name: id,
-                    pw: pw,
-                    team: [], box: [], pokedex: [], badges: [],
-                    lastLogin: new Date().toISOString()
-                };
-                game.db.savePlayerData(player);
-            }
-            game.state.player = player;
-            document.getElementById('auth-modal').classList.add('hidden');
-            game.network.connect(player);
-
-            if (player.team.length === 0) {
-                game.ui.renderActiveTab();
-                await game.ui.showStarterSelection();
-            } else {
-                game.ui.changeTab('wild');
-            }
-        }
+    // ★ 서버에서 불러오기 (비동기)
+    let player = await game.db.getPlayerData(id);
+    if (!player || player.name !== id) {
+        player = {
+            id: crypto.randomUUID(),
+            name: id,
+            pw: pw,
+            team: [], box: [], pokedex: [], badges: [],
+            lastLogin: new Date().toISOString()
+        };
+    } else {
+        player.lastLogin = new Date().toISOString();
     }
-};
 
+    await game.db.savePlayerData(player);
+    game.state.player = player;
+    document.getElementById('auth-modal').classList.add('hidden');
+    game.network.connect(player);
+
+    if (player.team.length === 0) {
+        game.ui.renderActiveTab();
+        await game.ui.showStarterSelection();
+    } else {
+        game.ui.changeTab('wild');
+    }
+}
 // ── game 객체 밖 ──────────────────────────────
 
 (function migrateCacheIfNeeded() {

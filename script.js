@@ -1064,6 +1064,8 @@ var game = {
         game.ui.changeTab('wild');
     }
 }
+    }
+};
 // ── game 객체 밖 ──────────────────────────────
 
 (function migrateCacheIfNeeded() {

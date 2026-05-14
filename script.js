@@ -752,6 +752,12 @@ var game = {
             if (!b) return;
             const team = game.state.player.team;
 
+             // 살아있는 포켓몬 없으면 바로 패배
+    const hasAlive = team.some(p => p !== b.playerPoke && (p.currentHp ?? p.stats.hp) > 0);
+    if (!hasAlive) {
+        setTimeout(() => game.battle.endBattle(false), 500);
+        return;
+    }
             const existing = document.getElementById('switch-overlay');
             if (existing) existing.remove();
 
@@ -767,7 +773,7 @@ var game = {
                             const hp     = p.currentHp ?? p.stats.hp;
                             const maxHp  = p.stats.hp;
                             const isCurrent = p === b.playerPoke;
-                            const isDead    = hp <= 0 || isCurrent;
+                            const isDead    = hp <= 0 
                             const hpPct  = Math.max(0, (hp / maxHp) * 100);
                             const hpColor = hpPct > 50 ? '#4caf50' : hpPct > 20 ? '#ff9800' : '#f44336';
                             return `

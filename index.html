@@ -8,8 +8,7 @@
 </head>
 <body>
     <div id="app">
-        <main id="view-port">
-            </main>
+        <main id="view-port"></main>
 
         <div id="battle-scene" class="hidden">
             <div class="battle-top">
@@ -17,10 +16,12 @@
                     <div class="name-bar"><span id="opp-name">---</span> <span id="opp-lv">Lv.0</span></div>
                     <div class="hp-track"><div id="opp-hp-fill" class="hp-fill"></div></div>
                 </div>
-                <img id="opp-sprite" src="" alt="">
+                <!-- src를 빈 문자열로 두면 브라우저가 현재 URL로 요청 → onerror 안 터짐 -->
+                <!-- data-src 패턴으로 실제 로드는 JS에서만 처리 -->
+                <img id="opp-sprite" alt="상대 포켓몬" style="visibility:hidden">
             </div>
             <div class="battle-bottom">
-                <img id="player-sprite" src="" alt="">
+                <img id="player-sprite" alt="내 포켓몬" style="visibility:hidden">
                 <div class="unit-info player">
                     <div class="name-bar"><span id="p-name">---</span> <span id="p-lv">Lv.0</span></div>
                     <div class="hp-track"><div id="p-hp-fill" class="hp-fill"></div></div>
@@ -55,6 +56,7 @@
         </div>
     </div>
 
+    <!-- 파일명을 실제 JS 파일명과 맞춰야 함 (game.js 또는 script.js 중 하나로 통일) -->
     <script src="script.js"></script>
 </body>
 </html>

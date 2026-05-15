@@ -1761,3 +1761,124 @@ body {
     color: white; border-radius: 8px; cursor: pointer;
 }
 .switch-cancel-btn:hover { background: #444; }
+
+/* =============================================
+   MEGA EVOLUTION & ECONOMY UI
+   ============================================= */
+.player-stats-bar {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+    background: rgba(0,0,0,0.3);
+    padding: 8px 15px;
+    border-radius: 20px;
+    font-size: 11px;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+.stat-item { display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
+.stat-item strong { color: var(--gb-yellow); }
+
+.mega-evolve-btn {
+    width: 100%;
+    padding: 12px;
+    margin-top: 15px;
+    background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(37, 117, 252, 0.4);
+    transition: all 0.2s;
+}
+.mega-evolve-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(37, 117, 252, 0.6);
+}
+.mega-evolve-btn:disabled {
+    background: #444;
+    box-shadow: none;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.mega-tag {
+    background: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 8px;
+    margin-left: 5px;
+    vertical-align: middle;
+}
+
+/* =============================================
+   POKEMON DETAIL MODAL
+   ============================================= */
+.detail-modal {
+    max-width: 400px;
+    width: 95%;
+    padding: 24px 20px !important;
+    max-height: 85vh;
+    overflow-y: auto;
+}
+
+.detail-header {
+    text-align: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.detail-sprite {
+    width: 140px;
+    height: 140px;
+    object-fit: contain;
+    filter: drop-shadow(0 8px 16px rgba(0,0,0,0.5));
+}
+
+.detail-main-info { margin-top: 10px; }
+.detail-name { font-size: 1.2rem; font-weight: bold; color: #fff; display: block; }
+.detail-id { font-size: 0.8rem; color: var(--text-dim); font-family: 'Press Start 2P'; }
+
+.detail-section-title {
+    font-family: 'Press Start 2P';
+    font-size: 9px;
+    color: var(--accent);
+    margin: 20px 0 10px;
+    text-align: left;
+}
+
+.detail-stats-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(0,0,0,0.2);
+    padding: 12px;
+    border-radius: 10px;
+}
+
+.detail-move-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.detail-move-item {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 8px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    text-align: left;
+}
+.detail-move-item .m-name { display: block; font-weight: bold; margin-bottom: 4px; }
+.detail-move-item .m-info { font-size: 0.7rem; color: var(--text-dim); }
+
+.mega-remaining {
+    font-size: 0.75rem;
+    color: var(--gb-yellow);
+    margin-top: 8px;
+    font-family: 'Press Start 2P', monospace;
+    line-height: 1.4;
+}

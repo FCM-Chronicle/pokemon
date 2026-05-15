@@ -42,6 +42,7 @@
             <button id="tab-team">🎒 팀</button>
             <button id="tab-pokedex">📖 도감</button>
             <button id="tab-rank">🏆 랭킹</button>
+            <button id="tab-box">📦 박스</button>
         </nav>
     </div>
 
@@ -62,6 +63,7 @@
             document.getElementById('tab-team').addEventListener('click', function () { game.ui.changeTab('team'); });
             document.getElementById('tab-pokedex').addEventListener('click', function () { game.ui.changeTab('pokedex'); });
             document.getElementById('tab-rank').addEventListener('click', function () { game.ui.changeTab('rank'); });
+            document.getElementById('tab-box').addEventListener('click', function () { game.ui.changeTab('box'); });
             document.getElementById('btn-login').addEventListener('click', function () { game.auth.login(); });
         });
     </script>

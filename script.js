@@ -7,6 +7,34 @@ var game = {
         currentBattle: null,
         pokeCache: {},
         evoChainCache: {},   // evolution chain 캐시
+        onlinePlayers: [],
+        rankings: [],
+        typeChart: {
+            fire: { grass: 2, ice: 2, bug: 2, steel: 2, water: 0.5, fire: 0.5, rock: 0.5, dragon: 0.5 },
+            water: { fire: 2, ground: 2, rock: 2, water: 0.5, grass: 0.5, dragon: 0.5 },
+            grass: { water: 2, ground: 2, rock: 2, fire: 0.5, grass: 0.5, poison: 0.5, flying: 0.5, bug: 0.5, dragon: 0.5, steel: 0.5 },
+            electric: { water: 2, flying: 2, electric: 0.5, grass: 0.5, dragon: 0.5, ground: 0 },
+            ice: { grass: 2, ground: 2, flying: 2, dragon: 2, fire: 0.5, water: 0.5, ice: 0.5, steel: 0.5 },
+            fighting: { normal: 2, ice: 2, rock: 2, dark: 2, steel: 2, poison: 0.5, flying: 0.5, psychic: 0.5, bug: 0.5, fairy: 0.5, ghost: 0 },
+            poison: { grass: 2, fairy: 2, poison: 0.5, ground: 0.5, rock: 0.5, ghost: 0.5, steel: 0 },
+            ground: { fire: 2, electric: 2, poison: 2, rock: 2, steel: 2, grass: 0.5, bug: 0.5, flying: 0 },
+            flying: { grass: 2, fighting: 2, bug: 2, electric: 0.5, rock: 0.5, steel: 0.5 },
+            psychic: { fighting: 2, poison: 2, psychic: 0.5, steel: 0.5, dark: 0 },
+            bug: { grass: 2, psychic: 2, dark: 2, fire: 0.5, fighting: 0.5, poison: 0.5, flying: 0.5, ghost: 0.5, steel: 0.5, fairy: 0.5 },
+            rock: { fire: 2, ice: 2, flying: 2, bug: 2, fighting: 0.5, ground: 0.5, steel: 0.5 },
+            ghost: { psychic: 2, ghost: 2, dark: 0.5, normal: 0 },
+            dragon: { dragon: 2, steel: 0.5, fairy: 0 },
+            dark: { psychic: 2, ghost: 2, fighting: 0.5, dark: 0.5, fairy: 0.5 },
+            steel: { ice: 2, rock: 2, fairy: 2, fire: 0.5, water: 0.5, electric: 0.5, steel: 0.5 },
+            fairy: { fighting: 2, dragon: 2, dark: 2, fire: 0.5, poison: 0.5, steel: 0.5 }
+        },
+        statusEffects: { // Define properties of status effects
+            poison: { name: '독', color: 'purple', damagePerTurn: 0.0625 }, // 1/16 of max HP
+            paralysis: { name: '마비', color: 'yellow', chanceToSkipTurn: 0.25, speedModifier: 0.5 }, // 25% chance to skip, speed halved
+            sleep: { name: '수면', color: 'gray', minTurns: 2, maxTurns: 4 }, // Sleep for 2-4 turns
+            burn: { name: '화상', color: 'orange', damagePerTurn: 0.0625, attackModifier: 0.5 }, // 1/16 of max HP, attack halved
+            freeze: { name: '얼음', color: 'lightblue', chanceToThaw: 0.2 }, // 20% chance to thaw each turn
+        }
     },
 
     db: {
@@ -14,14 +42,13 @@ var game = {
         try {
             const res = await fetch(`/api/players/${encodeURIComponent(name)}`);
             const json = await res.json();
-            return json.player;
+            return json.player; // Returns null if not found, or player object
         } catch (e) {
-            // 서버 실패시 로컬 폴백
-            return JSON.parse(localStorage.getItem('player_data'));
+            console.error('플레이어 데이터 불러오기 실패:', e);
+            return null; // Explicitly return null on error
         }
     },
     async savePlayerData(data) {
-        localStorage.setItem('player_data', JSON.stringify(data));
         try {
             await fetch('/api/players', {
                 method: 'POST',
@@ -29,6 +56,7 @@ var game = {
                 body: JSON.stringify(data)
             });
         } catch (e) {
+            // 서버 저장 실패 시에도 클라이언트는 계속 진행 (데이터는 다음 로그인 시 동기화)
             console.error('서버 저장 실패:', e);
         }
         if (game.network.socket && game.network.socket.readyState === WebSocket.OPEN)
@@ -67,7 +95,8 @@ var game = {
             } catch (_) {}
 
             const allMoves    = data.moves.map(m => m.move.name);
-            const pickedMoves = allMoves.sort(() => Math.random() - 0.5).slice(0, 4);
+            const pickedMoveNames = allMoves.sort(() => Math.random() - 0.5).slice(0, 4);
+            const moveDetails = await Promise.all(pickedMoveNames.map(name => this.fetchMoveDetail(name)));
             const spriteUrls  = this.getSpriteUrls(data.id);
 
             const pokeData = {
@@ -76,8 +105,10 @@ var game = {
                 nameEn:      data.name,
                 types:       data.types.map(t => t.type.name),
                 stats:       data.stats.reduce((acc, s) => ({ ...acc, [s.stat.name]: s.base_stat }), {}),
-                moves:       pickedMoves,
+                moves:       moveDetails,
                 allMovePool: allMoves,
+                status:      null, // Initial status
+                statusTurns: 0, // Turns remaining for status like sleep
                 spriteUrls:  spriteUrls,
                 spriteUrl:   spriteUrls[0],
             };
@@ -87,6 +118,33 @@ var game = {
         } catch (e) {
             console.error('API 오류:', e);
             return null;
+        }
+    },
+
+    async fetchMoveDetail(nameEn) {
+        try {
+            const res = await fetch(`https://pokeapi.co/api/v2/move/${nameEn}`);
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            let koName = data.name;
+            const koEntry = data.names.find(n => n.language.name === 'ko');
+            if (koEntry) koName = koEntry.name;
+
+            // Crit rate stages: 0 -> 6.25%, 1 -> 12.5%, 2 -> 25%, 3 -> 33.3%
+            const critChance = [0.0625, 0.125, 0.25, 0.333][data.meta.crit_rate || 0] || 0.0625;
+            return {
+                name: koName,
+                nameEn: data.name,
+                power: data.power || 40,
+                type: data.type.name,
+                accuracy: data.accuracy || 100, // Default to 100 if not specified
+                crit_chance: critChance,
+                // For simplicity, we won't fetch ailment details for now, but this is where it would go
+                // ailment: data.meta.ailment?.name,
+                // ailment_chance: data.meta.ailment_chance,
+            };
+        } catch (e) {
+            return { name: nameEn, nameEn: nameEn, power: 40, type: 'normal' };
         }
     },
 
@@ -146,15 +204,15 @@ var game = {
         const prevName = pokemon.nickname || pokemon.name;
 
         // 스탯/이름/타입/스프라이트 업데이트, 닉네임·레벨·경험치·기술 유지
+        const oldHpRatio = pokemon.currentHp / pokemon.stats.hp;
         pokemon.id        = evoData.id;
+        pokemon.currentHp = Math.floor(evoData.stats.hp * oldHpRatio); // Maintain HP ratio
         pokemon.name      = evoData.name;
         pokemon.nameEn    = evoData.nameEn;
         pokemon.types     = evoData.types;
         pokemon.stats     = evoData.stats;
         pokemon.spriteUrls= evoData.spriteUrls;
         pokemon.spriteUrl = evoData.spriteUrls[0];
-        // HP 비율 유지
-        pokemon.currentHp = evoData.stats.hp;
 
         // 기술 풀 업데이트 (기존 기술은 유지)
         const oldMoves     = pokemon.moves || [];
@@ -189,30 +247,28 @@ var game = {
     },
 
     async checkLevelUp(pokemon, expGain) {
-        const prevLevel = pokemon.level || 1;
         pokemon.exp = (pokemon.exp || 0) + expGain;
-        const expNeeded = prevLevel * 50;
+        let leveledUp = false;
 
-        if (pokemon.exp >= expNeeded) {
+        while (pokemon.exp >= (pokemon.level || 1) * 50) {
+            const expNeeded = (pokemon.level || 1) * 50;
             pokemon.exp -= expNeeded;
-            pokemon.level = prevLevel + 1;
+            pokemon.level = (pokemon.level || 1) + 1;
+            leveledUp = true;
+            
             game.ui.log(`${pokemon.nickname || pokemon.name}이(가) 레벨 ${pokemon.level}이 되었다!`);
 
-            // 기술 습득 (10렙마다)
-            if (pokemon.level % 10 === 0) {
-                await game.learnNewMove(pokemon);
-            }
-
-            // 진화 체크 (15렙, 30렙)
+            if (pokemon.level % 10 === 0) await game.learnNewMove(pokemon);
+            
             const evolved = await game.checkEvolution(pokemon);
-            if (evolved) {
-                game.db.savePlayerData(game.state.player);
-                game.ui.renderActiveTab();
-            }
-
-            return true;
+            if (evolved) pokemon.currentHp = Math.max(1, pokemon.currentHp);
         }
-        return false;
+
+        if (leveledUp) {
+            game.db.savePlayerData(game.state.player);
+            game.ui.renderActiveTab();
+        }
+        return leveledUp;
     },
 
     async learnNewMove(pokemon) {
@@ -220,15 +276,16 @@ var game = {
         if (pool.length === 0) return;
 
         const currentMoves = pokemon.moves || [];
-        const available = pool.filter(m => !currentMoves.includes(m));
+        const available = pool.filter(mName => !currentMoves.some(cm => cm.nameEn === mName));
         if (available.length === 0) return;
 
-        const newMove = available[Math.floor(Math.random() * available.length)];
+        const newMoveName = available[Math.floor(Math.random() * available.length)];
+        const newMove = await this.fetchMoveDetail(newMoveName);
 
         if (currentMoves.length < 4) {
             pokemon.moves.push(newMove);
-            game.ui.showToast(`${pokemon.nickname || pokemon.name}이(가) ${newMove}을(를) 배웠다!`);
-            game.ui.log(`새 기술 [${newMove}] 습득!`);
+            game.ui.showToast(`${pokemon.nickname || pokemon.name}이(가) ${newMove.name}을(를) 배웠다!`);
+            game.ui.log(`새 기술 [${newMove.name}] 습득!`);
         } else {
             game.ui._showMoveLearnPrompt(pokemon, newMove);
         }
@@ -270,12 +327,25 @@ var game = {
                 }
             }
 
-            wildPokeCopy.currentHp = wildPokeCopy.stats.hp;
+            wildPokeCopy.currentHp = wildPokeCopy.stats.hp; // Full HP for wild
+            wildPokeCopy.status = null;
+            wildPokeCopy.statusTurns = 0;
 
             const pLv    = playerPoke.level || 5;
             const minLv  = Math.max(2, pLv - 3);
             const maxLv  = pLv + 3;
             wildPokeCopy.level = Math.floor(Math.random() * (maxLv - minLv + 1)) + minLv;
+
+            // Determine turn order based on speed
+            let firstTurnPlayer = true; // Default to player
+            if (playerPoke.stats.speed < wildPokeCopy.stats.speed) {
+                firstTurnPlayer = false;
+            } else if (playerPoke.stats.speed === wildPokeCopy.stats.speed) {
+                firstTurnPlayer = Math.random() < 0.5; // Random if speeds are equal
+            }
+
+            playerPoke.status = null; // Clear player's status at start of new battle
+            playerPoke.statusTurns = 0;
 
             if (!playerPoke.currentHp || playerPoke.currentHp <= 0) {
                 playerPoke.currentHp = playerPoke.stats.hp;
@@ -285,13 +355,35 @@ var game = {
                 type: 'wild',
                 opponent: wildPokeCopy,
                 playerPoke: playerPoke,
-                isPlayerTurn: true,
+                participants: new Set([playerPoke]),
+                isPlayerTurn: firstTurnPlayer,
                 catchAttempts: 0,
             };
 
             game.ui.showBattleScene(true);
             game.ui.updateBattleUI();
             game.ui.log(`야생 ${wildPokeCopy.name}이(가) 나타났다!`);
+        },
+
+        async startPvpBattle(opponentId, opponentName, opponentTeam, isChallenger) {
+            const playerPoke = game.state.player?.team[0];
+            if (!playerPoke) {
+                game.ui.showToast("전투 가능한 포켓몬이 없습니다!");
+                return;
+            }
+
+            game.state.currentBattle = {
+                type: 'pvp',
+                opponentId: opponentId,
+                opponentPlayerName: opponentName,
+                opponent: { ...opponentTeam[0], currentHp: opponentTeam[0].stats.hp },
+                playerPoke: playerPoke,
+                participants: new Set([playerPoke]),
+                isPlayerTurn: isChallenger,
+            };
+            game.ui.showBattleScene(true);
+            game.ui.updateBattleUI();
+            game.ui.log(`${opponentName} 트레이너와 대전 시작!`);
         },
 
         async useMove(moveName) {
@@ -303,6 +395,19 @@ var game = {
             b.opponent.currentHp = Math.max(0, b.opponent.currentHp - damage);
             game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}의 ${moveName}! ${damage}의 데미지!`);
             game.ui.updateBattleUI();
+            
+            if (b.type === 'pvp') {
+                // PvP일 경우 상대방에게 액션 전송
+                game.network.send({ type: 'turn_action', opponentId: b.opponentId, action: { type: 'attack', move: moveName, damage: damage } });
+                game.ui.renderMoveButtons(); // 버튼 비활성화 (순서 대기)
+                
+                if (b.opponent.currentHp <= 0) {
+                    game.ui.log("대전에서 승리했습니다!");
+                    game.network.send({ type: 'battle_result', winnerId: game.state.player.id, loserId: b.opponentId, winnerName: game.state.player.name, loserName: b.opponentPlayerName });
+                    setTimeout(() => this.endBattle(true), 1500);
+                }
+                return;
+            }
 
             if (b.opponent.currentHp <= 0) {
                 const expGain = Math.floor(b.opponent.stats['special-attack'] * b.opponent.level / 7);
@@ -317,7 +422,11 @@ var game = {
             }
 
             setTimeout(() => {
-                const oppDamage = this.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, 35, b.opponent.level, 1);
+                const oppMove = b.opponent.moves[Math.floor(Math.random() * b.opponent.moves.length)];
+                const oppMovePower = oppMove?.power || 35;
+                const oppMoveType = oppMove?.type || 'normal';
+                const oppTypeMod = this.getTypeMultiplier(oppMoveType, b.playerPoke.types);
+                const oppDamage = this.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, oppMovePower, b.opponent.level, oppTypeMod);
                 b.playerPoke.currentHp = Math.max(0, (b.playerPoke.currentHp || b.playerPoke.stats.hp) - oppDamage);
                 game.ui.log(`야생 ${b.opponent.name}의 공격! ${oppDamage}의 데미지!`);
                 game.ui.updateBattleUI();
@@ -384,26 +493,7 @@ var game = {
                 } else {
                     const wiggle = Math.floor(Math.random() * 3) + 1;
                     game.ui.log(`아쉽다! 볼이 흔들렸다(${wiggle}번)... ${b.opponent.name}이(가) 탈출했다!`);
-                    setTimeout(() => {
-                        const oppDamage = this.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, 35, b.opponent.level, 1);
-                        b.playerPoke.currentHp = Math.max(0, b.playerPoke.currentHp - oppDamage);
-                        game.ui.log(`화가 난 ${b.opponent.name}의 공격! ${oppDamage}의 데미지!`);
-                        game.ui.updateBattleUI();
-                        if (b.playerPoke.currentHp <= 0) {
-                            game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}이(가) 쓰러졌다...`);
-                            const aliveIndex = game.state.player.team.findIndex(
-                                p => p !== b.playerPoke && (p.currentHp || p.stats.hp) > 0
-                            );
-                            if (aliveIndex >= 0) {
-                                setTimeout(() => game.ui.showForcedSwitch(), 800);
-                            } else {
-                                setTimeout(() => this.endBattle(false), 1500);
-                            }
-                        } else {
-                            b.isPlayerTurn = true;
-                            game.ui.renderMoveButtons();
-                        }
-                    }, 800);
+                    setTimeout(() => this.opponentTurn(), 800);
                 }
             }, 900);
         },
@@ -418,37 +508,145 @@ var game = {
             } else {
                 b.isPlayerTurn = false;
                 game.ui.log(`도망칠 수 없었다!`);
-                setTimeout(() => {
-                    const oppDamage = this.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, 35, b.opponent.level, 1);
-                    b.playerPoke.currentHp = Math.max(0, b.playerPoke.currentHp - oppDamage);
-                    game.ui.log(`야생 ${b.opponent.name}의 공격! ${oppDamage}의 데미지!`);
-                    game.ui.updateBattleUI();
-                    if (b.playerPoke.currentHp <= 0) {
-                        game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}이(가) 쓰러졌다...`);
-                        const aliveIndex = game.state.player.team.findIndex(
-                            p => p !== b.playerPoke && (p.currentHp || p.stats.hp) > 0
-                        );
-                        if (aliveIndex >= 0) {
-                            setTimeout(() => game.ui.showForcedSwitch(), 800);
-                        } else {
-                            setTimeout(() => this.endBattle(false), 1500);
-                        }
-                    } else {
-                        b.isPlayerTurn = true;
-                        game.ui.renderMoveButtons();
-                    }
-                }, 1000);
+                setTimeout(() => this.opponentTurn(), 1000);
             }
         },
 
-        calculateDamage(atk, def, movePower, level, typeMod) {
+        // 상대방의 액션 처리
+        async handleOpponentAction(action) {
+            const b = game.state.currentBattle;
+            if (!b || b.type !== 'pvp') return;
+
+            if (action.type === 'attack') {
+                // This is where the opponent's action (from server) is processed
+                // The server sends the damage, so we just apply it and update UI
+                const damage = action.damage || 0;
+                const playerPoke = b.playerPoke;
+                playerPoke.currentHp = Math.max(0, (playerPoke.currentHp || playerPoke.stats.hp) - damage);
+
+                let logMsg = `상대 ${b.opponent.name}의 ${action.move}! ${damage}의 데미지!`;
+                if (action.isCrit) logMsg += " 치명타!";
+                if (action.typeMod > 1) logMsg += " 효과가 굉장했다!";
+                if (action.typeMod < 1 && action.typeMod > 0) logMsg += " 효과가 별로인 듯하다...";
+                if (action.typeMod === 0) logMsg += " 효과가 없는 것 같다...";
+                game.ui.log(logMsg);
+                game.ui.updateBattleUI();
+
+                if (action.statusApplied && !playerPoke.status) {
+                    playerPoke.status = action.statusApplied;
+                    if (playerPoke.status === 'sleep') {
+                        playerPoke.statusTurns = Math.floor(Math.random() * (game.state.statusEffects.sleep.maxTurns - game.state.statusEffects.sleep.minTurns + 1)) + game.state.statusEffects.sleep.minTurns;
+                    }
+                    game.ui.log(`${playerPoke.nickname || playerPoke.name}은(는) ${game.state.statusEffects[playerPoke.status].name}에 걸렸다!`);
+                }
+
+                if (playerPoke.currentHp <= 0) {
+                    game.ui.log("패배했습니다...");
+                    setTimeout(() => this.endBattle(false), 1500);
+                } else {
+                    b.isPlayerTurn = true;
+                    game.ui.renderMoveButtons();
+                }
+            }
+        },
+
+        applyStatusDamage(pokemon) {
+            if (!pokemon.status) return;
+            const effect = game.state.statusEffects[pokemon.status];
+            if (effect && effect.damagePerTurn) {
+                const dmg = Math.floor(pokemon.stats.hp * effect.damagePerTurn);
+                if (dmg > 0) {
+                    pokemon.currentHp = Math.max(0, pokemon.currentHp - dmg);
+                    game.ui.log(`${pokemon.nickname || pokemon.name}은(는) ${effect.name} 데미지를 입었다!`);
+                }
+            }
+        },
+
+        checkStatusBeforeTurn(pokemon) {
+            if (!pokemon.status) return false;
+            const effect = game.state.statusEffects[pokemon.status];
+            
+            if (pokemon.status === 'sleep') {
+                pokemon.statusTurns--;
+                if (pokemon.statusTurns <= 0) {
+                    pokemon.status = null;
+                    game.ui.log(`${pokemon.nickname || pokemon.name}은(는) 잠에서 깨어났다!`);
+                    return false;
+                }
+                game.ui.log(`${pokemon.nickname || pokemon.name}은(는) 깊은 잠에 빠져 있다...`);
+                return true;
+            }
+            if (pokemon.status === 'paralysis' && Math.random() < effect.chanceToSkipTurn) {
+                game.ui.log(`${pokemon.nickname || pokemon.name}은(는) 몸이 저려 움직일 수 없다!`);
+                return true;
+            }
+            if (pokemon.status === 'freeze') {
+                if (Math.random() < effect.chanceToThaw) {
+                    pokemon.status = null;
+                    game.ui.log(`${pokemon.nickname || pokemon.name}의 얼음이 녹았다!`);
+                    return false;
+                }
+                game.ui.log(`${pokemon.nickname || pokemon.name}은(는) 얼어붙어 움직일 수 없다!`);
+                return true;
+            }
+            return false;
+        },
+
+        getTypeMultiplier(moveType, targetTypes) {
+            let multiplier = 1;
+            targetTypes.forEach(tType => {
+                const mod = game.state.typeChart[moveType]?.[tType];
+                if (mod !== undefined) multiplier *= mod;
+            });
+            return multiplier;
+        },
+
+        calculateDamage(atk, def, movePower, level, typeMod, isSTAB, isCrit, attackerStatus) {
             const random  = 0.85 + Math.random() * 0.15;
             const levelMod = (level || 5) / 50;
             const safeDef  = def || 1;
-            return Math.max(1, Math.floor((atk / safeDef) * movePower * typeMod * random * (1 + levelMod)));
+
+            let finalAtk = atk;
+            if (attackerStatus === 'burn' && game.state.statusEffects.burn.attackModifier) {
+                finalAtk *= game.state.statusEffects.burn.attackModifier;
+            }
+
+            let damage = Math.max(1, Math.floor((finalAtk / safeDef) * movePower * typeMod * random * (1 + levelMod)));
+
+            if (isSTAB) damage = Math.floor(damage * 1.5); // STAB bonus
+            if (isCrit) damage = Math.floor(damage * 1.5); // Critical hit bonus (standard is 1.5x in modern games)
+
+            return damage;
         },
 
         endBattle(isWin) {
+            const b = game.state.currentBattle;
+            if (!b) return;
+
+            if (isWin !== null && game.state.player) {
+                // 판수 증가
+                game.state.player.totalGames = (game.state.player.totalGames || 0) + 1;
+                
+                // PvP 승리 시에만 돈 지급 (야생 포켓몬 제외)
+                if (isWin && b.type === 'pvp') {
+                    const reward = 200 + Math.floor(Math.random() * 201);
+                    game.state.player.money = (game.state.player.money || 0) + reward;
+                    game.ui.showToast(`PvP 승리! ${reward}$ 획득!`);
+                }
+
+                // 출전한 포켓몬 중 메가진화 상태인 것들의 남은 게임 수 차감
+                if (b.participants) {
+                    b.participants.forEach(p => {
+                        if (p.isMega) {
+                            p.megaGames = (p.megaGames || 0) + 1;
+                            if (p.megaGames >= 10) {
+                                this._revertMega(p);
+                            }
+                        }
+                    });
+                }
+            }
+
             game.state.currentBattle = null;
             game.ui.showBattleScene(false);
             if (game.state.player) {
@@ -456,7 +654,26 @@ var game = {
                 game.db.savePlayerData(game.state.player);
             }
             game.ui.renderActiveTab();
-        }
+        },
+
+        async _revertMega(p) {
+            const originalData = await game.fetchPokemon(p.originalId);
+            if (!originalData) return;
+            
+            p.id = originalData.id;
+            p.name = p.originalName || originalData.name;
+            p.nameEn = originalData.nameEn;
+            p.stats = originalData.stats;
+            p.spriteUrls = originalData.spriteUrls;
+            p.spriteUrl = originalData.spriteUrls[0];
+            
+            p.isMega = false;
+            delete p.megaGames;
+            delete p.originalId;
+            delete p.originalName;
+            
+            game.ui.showToast(`${p.name}의 메가진화가 해제되었습니다.`);
+        },
     },
 
     network: {
@@ -471,6 +688,34 @@ var game = {
                 this.socket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
                     if (data.type === 'sync_cache') game.state.pokeCache = data.cache;
+                    if (data.type === 'player_list') {
+                        game.state.onlinePlayers = data.players;
+                        if (game.state.activeTab === 'pvp') game.ui.renderActiveTab();
+                    }
+                    if (data.type === 'challenged') {
+                        game.ui.showChallengeModal(data.challengerId, data.challengerName, data.challengerTeam);
+                    }
+                    if (data.type === 'accepted') {
+                        game.battle.startPvpBattle(data.opponentId, data.opponentName, data.opponentTeam, true);
+                    }
+                    if (data.type === 'turn_action') {
+                        game.battle.handleOpponentAction(data.action);
+                    }
+                    if (data.type === 'ranking_update') {
+                        game.state.rankings = data.ranking;
+                        if (game.state.activeTab === 'rank') game.ui.renderActiveTab();
+                    }
+                    if (data.type === 'opponent_disconnected') {
+                        game.ui.log("상대방의 연결이 끊겼습니다. 승리 처리됩니다!");
+                        const b = game.state.currentBattle;
+                        if (b) {
+                            game.network.send({ 
+                                type: 'battle_result', winnerId: game.state.player.id, loserId: b.opponentId, 
+                                winnerName: game.state.player.name, loserName: b.opponentPlayerName 
+                            });
+                            setTimeout(() => game.battle.endBattle(true), 2000);
+                        }
+                    }
                 };
             } catch(e) { /* 서버 없음 - 오프라인 모드 */ }
         },
@@ -484,7 +729,7 @@ var game = {
         changeTab(tab) {
             game.state.activeTab = tab;
             document.querySelectorAll('#tab-bar button').forEach(b => b.classList.remove('active'));
-            const idx = ['wild','pvp','team','pokedex','rank'].indexOf(tab);
+            const idx = ['wild','pvp','team','pokedex','rank','box'].indexOf(tab);
             if (idx >= 0) document.querySelectorAll('#tab-bar button')[idx]?.classList.add('active');
             this.renderActiveTab();
         },
@@ -498,6 +743,7 @@ var game = {
             else if (tab === 'pokedex') this.renderPokedexTab(vp);
             else if (tab === 'pvp')     this.renderPvpTab(vp);
             else if (tab === 'rank')    this.renderRankTab(vp);
+            else if (tab === 'box')     this.renderBoxTab(vp);
         },
 
         getSpriteHtml(poke, className) {
@@ -535,6 +781,10 @@ var game = {
                         </div>
                         <div class="scene-content">
                             <div class="zone-badge">📍 ${zoneText}</div>
+                            <div class="player-stats-bar">
+                                <div class="stat-item">💰 <strong>${player.money || 0}</strong></div>
+                                <div class="stat-item">🎮 <strong>${player.totalGames || 0}</strong> Games</div>
+                            </div>
                             <div class="player-poke-display">
                                 ${leadPoke ? `
                                     <div class="lobby-poke-card">
@@ -583,7 +833,7 @@ var game = {
                     <div class="team-grid">
                         ${team.length === 0 ? `<p class="empty-hint">아직 포켓몬이 없습니다.</p>` : ''}
                         ${team.map((p, i) => `
-                            <div class="team-card type-bg-${p.types?.[0] || 'normal'}">
+                            <div class="team-card type-bg-${p.types?.[0] || 'normal'}" onclick="game.ui.showPokeDetail(${i})">
                                 <div class="team-card-inner">
                                     ${game.ui.getSpriteHtml(p, 'team-sprite')}
                                     <div class="team-card-info">
@@ -605,7 +855,14 @@ var game = {
                                             <div class="stat-bar-track"><div class="stat-bar-fill exp" style="width:${Math.min(100, ((p.exp || 0) / ((p.level || 1) * 50)) * 100)}%"></div></div>
                                         </div>
                                         <div class="move-list-mini">
-                                            ${(p.moves || []).map(m => `<span class="move-chip">${m}</span>`).join('')}
+                                            ${p.status ? `
+                                                <span class="status-badge type-${p.status}">${game.state.statusEffects[p.status].name}</span>
+                                            ` : ''}
+                                            ${(p.moves || []).map(m => {
+                                                const name = m.name || m;
+                                                const type = m.type || 'normal';
+                                                return `<span class="move-chip type-${type}">${name}</span>`;
+                                            }).join('')}
                                         </div>
                                     </div>
                                 </div>
@@ -643,12 +900,162 @@ var game = {
             game.ui.applySprites(container);
         },
 
+        renderBoxTab(container) {
+            const box = game.state.player?.box || [];
+            container.innerHTML = `
+                <div class="tab-content box-tab">
+                    <h2 class="tab-title pixel">포켓몬 박스</h2>
+                    <p class="box-count">보관 중: ${box.length}마리</p>
+                    <div class="box-grid">
+                        ${box.length === 0 ? '<p class="empty-hint">박스가 비어있습니다.</p>' : ''}
+                        ${box.map((p, i) => `
+                            <div class="box-item type-bg-${p.types?.[0] || 'normal'}" onclick="game.ui._showBoxSwapMenu(${i})">
+                                ${this.getSpriteHtml(p, 'box-mini-sprite')}
+                                <div class="box-item-info">
+                                    <span class="box-item-name">${p.nickname || p.name}</span>
+                                    <span class="box-item-lv">Lv.${p.level || 1}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            game.ui.applySprites(container);
+        },
+
+        _showBoxSwapMenu(boxIndex) {
+            const boxPoke = game.state.player.box[boxIndex];
+            const team = game.state.player.team;
+            
+            const existing = document.getElementById('box-swap-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'box-swap-overlay';
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal-content box-swap-modal">
+                    <h3 class="pixel">박스 관리</h3>
+                    <div class="selected-box-poke">
+                        <img data-poke-id="${boxPoke.id}" style="width:64px;height:64px">
+                        <p><strong>${boxPoke.nickname || boxPoke.name}</strong> (Lv.${boxPoke.level})</p>
+                    </div>
+                    
+                    <div class="swap-options">
+                        <p class="swap-label">팀으로 데려오기:</p>
+                        ${team.length < 6 ? `
+                            <button class="swap-btn add-to-team" onclick="game.ui._doBoxSwap(${boxIndex}, -1)">빈 자리에 추가</button>
+                        ` : ''}
+                        <div class="team-swap-list">
+                            ${team.map((p, i) => `
+                                <button class="swap-btn" onclick="game.ui._doBoxSwap(${boxIndex}, ${i})">
+                                    ${p.nickname || p.name} (Lv.${p.level})와 교체
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <button class="modal-close-btn" onclick="document.getElementById('box-swap-overlay').remove()">취소</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            game.ui.applySprites(overlay);
+        },
+
+        _doBoxSwap(boxIndex, teamIndex) {
+            const player = game.state.player;
+            const boxPoke = player.box[boxIndex];
+            
+            if (teamIndex === -1) {
+                // 빈 자리 추가 (팀이 6마리 미만일 때)
+                player.team.push(boxPoke);
+                player.box.splice(boxIndex, 1);
+            } else {
+                // 기존 팀원과 교체
+                const teamPoke = player.team[teamIndex];
+                player.team[teamIndex] = boxPoke;
+                player.box[boxIndex] = teamPoke;
+            }
+
+            game.db.savePlayerData(player);
+            document.getElementById('box-swap-overlay').remove();
+            game.ui.showToast('팀 구성이 변경되었습니다!');
+            this.renderActiveTab();
+        },
+
         renderPvpTab(container) {
-            container.innerHTML = `<div class="tab-content"><h2 class="tab-title pixel">대전</h2><p class="empty-hint">PvP 기능 준비 중!</p></div>`;
+            const players = game.state.onlinePlayers || [];
+            const me = game.state.player;
+            container.innerHTML = `
+                <div class="tab-content pvp-tab">
+                    <h2 class="tab-title pixel">트레이너 대전</h2>
+                    <div class="player-list">
+                        ${players.filter(p => p.id !== me.id).map(p => `
+                            <div class="player-item">
+                                <div class="p-info">
+                                    <span class="p-name">${p.name}</span>
+                                    <span class="p-status ${p.status}">${p.status === 'online' ? '대기 중' : '전투 중'}</span>
+                                </div>
+                                <button class="btn-challenge pixel" ${p.status !== 'online' ? 'disabled' : ''} 
+                                    onclick="game.network.send({type:'challenge', targetId:'${p.id}'})">도전장 발송</button>
+                            </div>
+                        `).join('')}
+                        ${players.length <= 1 ? '<p class="empty-hint">현재 접속 중인 다른 트레이너가 없습니다.</p>' : ''}
+                    </div>
+                </div>
+            `;
         },
 
         renderRankTab(container) {
-            container.innerHTML = `<div class="tab-content"><h2 class="tab-title pixel">랭킹</h2><p class="empty-hint">랭킹 기능 준비 중!</p></div>`;
+            const ranks = game.state.rankings || [];
+            container.innerHTML = `
+                <div class="tab-content rank-tab">
+                    <h2 class="tab-title pixel">명예의 전당</h2>
+                    <div class="rank-list">
+                        <div class="rank-header">
+                            <span>순위</span><span>이름</span><span>승/패</span><span>승률</span>
+                        </div>
+                        ${ranks.map((r, i) => `
+                            <div class="rank-item ${i < 3 ? 'top-rank' : ''}">
+                                <span class="r-pos">${i + 1}</span>
+                                <span class="r-name">${r.playerName}</span>
+                                <span class="r-record">${r.win}승 ${r.lose}패</span>
+                                <span class="r-rate">${r.winRate}%</span>
+                            </div>
+                        `).join('')}
+                        ${ranks.length === 0 ? '<p class="empty-hint">아직 랭킹 정보가 없습니다.</p>' : ''}
+                    </div>
+                </div>
+            `;
+        },
+
+        showChallengeModal(challengerId, challengerName, challengerTeam) {
+            const existing = document.getElementById('challenge-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'challenge-overlay';
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal-content challenge-modal">
+                    <h3 class="pixel">${challengerName} 트레이너가 대전을 신청했습니다!</h3>
+                    <div class="challenger-preview">
+                        <img data-poke-id="${challengerTeam[0].id}" style="width:64px;height:64px">
+                        <p>${challengerTeam[0].nickname || challengerTeam[0].name} (Lv.${challengerTeam[0].level})</p>
+                    </div>
+                    <div class="modal-btns">
+                        <button class="pixel accept" onclick="game.ui._acceptChallenge('${challengerId}', '${challengerName}', ${JSON.stringify(challengerTeam).replace(/"/g, '&quot;')})">수락</button>
+                        <button class="pixel decline" onclick="document.getElementById('challenge-overlay').remove()">거절</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            game.ui.applySprites(overlay);
+        },
+
+        _acceptChallenge(challengerId, challengerName, challengerTeam) {
+            document.getElementById('challenge-overlay').remove();
+            game.network.send({ type: 'accept', challengerId });
+            game.battle.startPvpBattle(challengerId, challengerName, challengerTeam, false);
         },
 
         // ── 진화 연출 ──────────────────────────────
@@ -692,16 +1099,16 @@ var game = {
             overlay.innerHTML = `
                 <div class="modal-content move-learn-modal">
                     <h3 class="pixel">${pokemon.nickname || pokemon.name}이(가) 새 기술을 배우려 한다!</h3>
-                    <p class="new-move-name">✨ <strong>${newMove}</strong></p>
+                    <p class="new-move-name">✨ <strong>${newMove.name}</strong> (타입: ${newMove.type.toUpperCase()} / 위력: ${newMove.power})</p>
                     <p class="move-learn-sub">기술을 4개 이상 배울 수 없다. 잊을 기술을 선택하거나 포기하세요.</p>
                     <div class="move-forget-list">
                         ${(pokemon.moves || []).map((m) => `
-                            <button class="move-forget-btn" onclick="game.ui._confirmForgetMove('${m}', '${newMove}', '${pokemon.nickname || pokemon.name}')">
-                                ${m} 을(를) 잊고 ${newMove} 배우기
+                            <button class="move-forget-btn type-${m.type || 'normal'}" onclick="game.ui._confirmForgetMove('${m.name}', '${newMove.name}', '${pokemon.nickname || pokemon.name}')">
+                                [${m.type.toUpperCase()}] ${m.name} 을(를) 잊기
                             </button>
                         `).join('')}
                         <button class="move-forget-btn cancel" onclick="document.getElementById('move-learn-overlay').remove()">
-                            ${newMove} 배우지 않기
+                            ${newMove.name} 배우지 않기
                         </button>
                     </div>
                 </div>
@@ -778,6 +1185,8 @@ var game = {
                 exp: 0,
                 moves: [...(selected.moves || [])],
                 allMovePool: [...(selected.allMovePool || [])],
+                status: null,
+                statusTurns: 0,
             };
             game.state.player.team.push(newPoke);
             game.db.savePlayerData(game.state.player);
@@ -801,6 +1210,106 @@ var game = {
             }
         },
 
+        showPokeDetail(index) {
+            const p = game.state.player.team[index];
+            if (!p) return;
+
+            const existing = document.getElementById('detail-overlay');
+            if (existing) existing.remove();
+
+            const hpPct = (p.currentHp / p.stats.hp) * 100;
+            const isMega = p.nameEn.includes('-mega');
+            const canMega = (game.state.player.totalGames >= 5) && !isMega;
+            const megaCost = 2000;
+            
+            const overlay = document.createElement('div');
+            overlay.id = 'detail-overlay';
+            overlay.className = 'modal-overlay';
+            overlay.innerHTML = `
+                <div class="modal-content detail-modal type-bg-${p.types[0]}">
+                    <div class="detail-header">
+                        <div class="detail-id">#${String(p.id).padStart(3, '0')}</div>
+                        ${this.getSpriteHtml(p, 'detail-sprite')}
+                        <div class="detail-main-info">
+                            <span class="detail-name">${p.nickname || p.name} ${isMega ? '<span class="mega-tag">MEGA</span>' : ''}</span>
+                            ${isMega ? `<div class="mega-remaining">해제까지: ${10 - (p.megaGames || 0)}게임</div>` : ''}
+                            <div class="type-badges" style="justify-content: center; margin-top: 5px;">
+                                ${p.types.map(t => `<span class="type-badge type-${t}">${t}</span>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="detail-section-title">BASE STATS</div>
+                    <div class="detail-stats-grid">
+                        ${Object.entries(p.stats).map(([sName, sVal]) => `
+                            <div class="stat-row">
+                                <span style="width: 80px; text-transform: uppercase;">${sName.replace('-', ' ')}</span>
+                                <div class="stat-bar-track">
+                                    <div class="stat-bar-fill" style="width: ${Math.min(100, sVal / 2)}%; background: ${sName === 'hp' ? '#4caf50' : '#e94560'}"></div>
+                                </div>
+                                <span style="width: 30px; text-align: right;">${sVal}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <div class="detail-section-title">MOVES</div>
+                    <div class="detail-move-grid">
+                        ${(p.moves || []).map(m => `
+                            <div class="detail-move-item">
+                                <span class="m-name">${m.name || m}</span>
+                                <span class="m-info">${m.type?.toUpperCase() || 'NORMAL'} / P:${m.power || 40}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    ${canMega ? `
+                        <button class="mega-evolve-btn" 
+                            ${game.state.player.money < megaCost ? 'disabled' : ''} 
+                            onclick="game.ui._doMegaEvolution(${index})">
+                            ${game.state.player.money < megaCost ? `금액 부족 (${megaCost}$ 필요)` : '메가진화의 돌 구매 (2000$)'}
+                        </button>
+                    ` : ''}
+
+                    <button class="switch-cancel-btn" style="margin-top: 20px;" onclick="document.getElementById('detail-overlay').remove()">닫기</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            this.applySprites(overlay);
+        },
+
+        async _doMegaEvolution(index) {
+            const player = game.state.player;
+            const p = player.team[index];
+            const megaCost = 2000;
+
+            if (player.money < megaCost) return;
+
+            game.ui.showToast('메가진화 시퀀스 가동...');
+            
+            // 메가진화 데이터 가져오기 (이름 뒤에 -mega를 붙여 시도)
+            const megaData = await game.fetchPokemon(`${p.nameEn}-mega`);
+            if (!megaData) {
+                game.ui.showToast('이 포켓몬은 메가진화가 불가능합니다.');
+                return;
+            }
+
+            player.money -= megaCost;
+            p.originalId = p.id;
+            p.originalName = p.name;
+            p.id = megaData.id;
+            p.name = "메가" + p.name;
+            p.nameEn = megaData.nameEn;
+            p.stats = megaData.stats;
+            p.spriteUrls = megaData.spriteUrls;
+            p.spriteUrl = megaData.spriteUrls[0];
+            p.isMega = true;
+            p.megaGames = 0;
+
+            game.db.savePlayerData(player);
+            document.getElementById('detail-overlay').remove();
+            game.ui.showEvolutionEffect(p.nickname, p);
+        },
+
         updateBattleUI() {
             const b = game.state.currentBattle;
             if (!b) return;
@@ -810,6 +1319,9 @@ var game = {
             document.getElementById('opp-name').textContent = opp.name;
             document.getElementById('opp-lv').textContent   = `Lv.${opp.level}`;
             const oppHpPct = Math.max(0, (opp.currentHp / opp.stats.hp) * 100);
+            const oppStatus = opp.status ? `<span class="status-text type-${opp.status}">${game.state.statusEffects[opp.status].name}</span>` : '';
+            document.getElementById('opp-name').innerHTML = `${opp.name} ${oppStatus}`;
+
             document.getElementById('opp-hp-fill').style.width      = oppHpPct + '%';
             document.getElementById('opp-hp-fill').style.background = oppHpPct > 50 ? '#4caf50' : oppHpPct > 20 ? '#ff9800' : '#f44336';
             game.ui.loadSprite(document.getElementById('opp-sprite'), opp.spriteUrls || game.getSpriteUrls(opp.id));
@@ -817,6 +1329,9 @@ var game = {
             document.getElementById('p-name').textContent = pp.nickname || pp.name;
             document.getElementById('p-lv').textContent   = `Lv.${pp.level || 1}`;
             const ppHpPct = Math.max(0, ((pp.currentHp || pp.stats.hp) / pp.stats.hp) * 100);
+            const playerStatus = pp.status ? `<span class="status-text type-${pp.status}">${game.state.statusEffects[pp.status].name}</span>` : '';
+            document.getElementById('p-name').innerHTML = `${pp.nickname || pp.name} ${playerStatus}`;
+
             document.getElementById('p-hp-fill').style.width      = ppHpPct + '%';
             document.getElementById('p-hp-fill').style.background = ppHpPct > 50 ? '#4caf50' : ppHpPct > 20 ? '#ff9800' : '#f44336';
             game.ui.loadSprite(document.getElementById('player-sprite'), pp.spriteUrls || game.getSpriteUrls(pp.id));
@@ -840,9 +1355,15 @@ var game = {
             const moveList = document.getElementById('move-list');
             if (!moveList || !b) return;
             const moves = b.playerPoke.moves || [];
-            moveList.innerHTML = moves.map(m => `
-                <button class="move-btn" onclick="game.battle.useMove('${m}')">${m}</button>
-            `).join('');
+            moveList.innerHTML = moves.map(m => {
+                const name = m.name || m;
+                const type = m.type || 'normal';
+                const pwr  = m.power || 40;
+                return `<button class="move-btn type-${type}" ${!b.isPlayerTurn ? 'disabled' : ''} onclick="game.battle.useMove('${name}')" title="정확도: ${m.accuracy || 100}%">
+                    <span class="m-name">${name}</span>
+                    <span class="m-info">${type.toUpperCase()} / P:${pwr}</span>
+                </button>`;
+            }).join('');
 
             const subMenu = document.getElementById('sub-menu');
             if (subMenu && !document.getElementById('btn-switch')) {
@@ -973,9 +1494,12 @@ var game = {
             if (overlay) overlay.remove();
 
             const newPoke = game.state.player.team[teamIndex];
-            if (!newPoke) return;
+            if (!newPoke) {
+                game.ui.log("교체할 포켓몬을 찾을 수 없습니다."); return;
+            }
 
             b.playerPoke = newPoke;
+            if (b.participants) b.participants.add(newPoke);
             game.ui.log(`${newPoke.nickname || newPoke.name}! 가랏!`);
             game.ui.updateBattleUI();
             game.ui.renderMoveButtons();
@@ -983,26 +1507,8 @@ var game = {
             if (!isForced) {
                 b.isPlayerTurn = false;
                 setTimeout(() => {
-                    const oppDamage = game.battle.calculateDamage(
-                        b.opponent.stats.attack, b.playerPoke.stats.defense, 35, b.opponent.level, 1
-                    );
-                    b.playerPoke.currentHp = Math.max(0, (b.playerPoke.currentHp ?? b.playerPoke.stats.hp) - oppDamage);
-                    game.ui.log(`야생 ${b.opponent.name}의 공격! ${oppDamage}의 데미지!`);
-                    game.ui.updateBattleUI();
-                    if (b.playerPoke.currentHp <= 0) {
-                        game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}이(가) 쓰러졌다...`);
-                        const aliveIndex = game.state.player.team.findIndex(
-                            p => p !== b.playerPoke && (p.currentHp || p.stats.hp) > 0
-                        );
-                        if (aliveIndex >= 0) {
-                            setTimeout(() => game.ui.showForcedSwitch(), 800);
-                        } else {
-                            setTimeout(() => game.battle.endBattle(false), 1500);
-                        }
-                    } else {
-                        b.isPlayerTurn = true;
-                        game.ui.renderMoveButtons();
-                    }
+                    // Opponent's turn after player switches
+                    this.opponentTurn();
                 }, 1000);
             } else {
                 b.isPlayerTurn = true;
@@ -1040,16 +1546,24 @@ var game = {
 
     // ★ 서버에서 불러오기 (비동기)
     let player = await game.db.getPlayerData(id);
-    if (!player || player.name !== id) {
+    if (!player) { // If player doesn't exist, it's a new registration
         player = {
             id: crypto.randomUUID(),
             name: id,
-            pw: pw,
-            team: [], box: [], pokedex: [], badges: [],
+            pw: pw, // Storing password directly as per user's instruction to ignore security
+                team: [], box: [], pokedex: [], badges: [],
+                money: 0,
+                totalGames: 0,
             lastLogin: new Date().toISOString()
         };
+        game.ui.showToast(`${id}님, 새로운 계정이 생성되었습니다!`);
     } else {
+        if (player.pw !== pw) {
+            game.ui.showToast("비밀번호가 일치하지 않습니다.");
+            return;
+        }
         player.lastLogin = new Date().toISOString();
+        game.ui.showToast(`${id}님, 환영합니다!`);
     }
 
     await game.db.savePlayerData(player);
@@ -1067,27 +1581,6 @@ var game = {
     }
 };
 // ── game 객체 밖 ──────────────────────────────
-
-(function migrateCacheIfNeeded() {
-    try {
-        const raw = localStorage.getItem('player_data');
-        if (!raw) return;
-        const player = JSON.parse(raw);
-        const allPokes = (player.team || []).concat(player.box || []);
-        const needsMigration = allPokes.some(p => !p.spriteUrls);
-        if (needsMigration) {
-            allPokes.forEach(p => {
-                if (!p.spriteUrls) {
-                    p.spriteUrls = game.getSpriteUrls(p.id);
-                    p.spriteUrl  = p.spriteUrls[0];
-                }
-            });
-            localStorage.setItem('player_data', JSON.stringify(player));
-            console.log('[마이그레이션] 스프라이트 URL 업데이트 완료');
-        }
-    } catch(e) {}
-})();
-
 function pokeFallback(img) {
     const id = img.dataset.id;
     const fb = parseInt(img.dataset.fb || '0', 10);

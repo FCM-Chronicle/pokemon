@@ -394,7 +394,11 @@ var game = {
             if (!b || !b.isPlayerTurn) return;
             b.isPlayerTurn = false;
 
-            const damage = this.calculateDamage(b.playerPoke.stats.attack, b.opponent.stats.defense, 40, b.playerPoke.level || 5, 1);
+            const move = b.playerPoke.moves.find(m => (m.name || m) === moveName);
+            const movePower = move?.power || 40;
+            const typeMod = this.getTypeMultiplier(move?.type || 'normal', b.opponent.types);
+
+            const damage = this.calculateDamage(b.playerPoke.stats.attack, b.opponent.stats.defense, movePower, b.playerPoke.level || 5, typeMod);
             b.opponent.currentHp = Math.max(0, b.opponent.currentHp - damage);
             game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}의 ${moveName}! ${damage}의 데미지!`);
             game.ui.updateBattleUI();
@@ -428,8 +432,8 @@ var game = {
                 const oppMove = b.opponent.moves[Math.floor(Math.random() * b.opponent.moves.length)];
                 const oppMovePower = oppMove?.power || 35;
                 const oppMoveType = oppMove?.type || 'normal';
-                const oppTypeMod = this.getTypeMultiplier(oppMoveType, b.playerPoke.types);
-                const oppDamage = this.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, oppMovePower, b.opponent.level, oppTypeMod);
+                const oppTypeMod = game.battle.getTypeMultiplier(oppMoveType, b.playerPoke.types);
+                const oppDamage = game.battle.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, oppMovePower, b.opponent.level, oppTypeMod);
                 b.playerPoke.currentHp = Math.max(0, (b.playerPoke.currentHp || b.playerPoke.stats.hp) - oppDamage);
                 game.ui.log(`야생 ${b.opponent.name}의 공격! ${oppDamage}의 데미지!`);
                 game.ui.updateBattleUI();

@@ -70,25 +70,28 @@ var game = {
 },
 
     getSpriteUrls(pokeId) {
-        const padId = String(pokeId).padStart(3, '0');
+        const js = 'https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon';
+        const un = 'https://unpkg.com/pokeapi-sprites@2.0.2/sprites/pokemon';
         const gh = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon';
+        
         return [
-            `https://assets.pokemon.com/assets/cms2/img/pokedex/full/${padId}.png`,
-            `${gh}/other/official-artwork/${pokeId}.png`,
-            `${gh}/${pokeId}.png`,
+            `${js}/other/official-artwork/${pokeId}.png`, // JSDelivr (차단될 확률 매우 낮음)
+            `${un}/other/official-artwork/${pokeId}.png`, // Unpkg (대체 CDN)
+            `${gh}/other/official-artwork/${pokeId}.png`, // GitHub 원본
+            `${js}/${pokeId}.png`,                        // 일반 스프라이트
         ];
     },
 
     async fetchPokemon(id) {
         if (this.state.pokeCache[id]) return this.state.pokeCache[id];
         try {
-            const res  = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
+            const res  = await fetch(`/api/pokeapi/pokemon/${id}`);
             if (!res.ok) throw new Error('API 오류');
             const data = await res.json();
 
             let koName = data.name;
             try {
-                const specRes  = await fetch(data.species.url);
+                const specRes  = await fetch(data.species.url.replace('https://pokeapi.co/api/v2', '/api/pokeapi'));
                 const specData = await specRes.json();
                 const koEntry  = specData.names.find(n => n.language.name === 'ko');
                 if (koEntry) koName = koEntry.name;
@@ -123,7 +126,7 @@ var game = {
 
     async fetchMoveDetail(nameEn) {
         try {
-            const res = await fetch(`https://pokeapi.co/api/v2/move/${nameEn}`);
+            const res = await fetch(`/api/pokeapi/move/${nameEn}`);
             if (!res.ok) throw new Error();
             const data = await res.json();
             let koName = data.name;
@@ -153,11 +156,11 @@ var game = {
     async fetchEvoChain(pokemonId) {
         if (this.state.evoChainCache[pokemonId]) return this.state.evoChainCache[pokemonId];
         try {
-            const specRes  = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${pokemonId}`);
+            const specRes  = await fetch(`/api/pokeapi/pokemon-species/${pokemonId}`);
             if (!specRes.ok) return null;
             const specData = await specRes.json();
 
-            const chainRes  = await fetch(specData.evolution_chain.url);
+            const chainRes  = await fetch(specData.evolution_chain.url.replace('https://pokeapi.co/api/v2', '/api/pokeapi'));
             if (!chainRes.ok) return null;
             const chainData = await chainRes.json();
 
@@ -1339,15 +1342,21 @@ var game = {
 
         loadSprite(imgEl, urls) {
             if (!imgEl || !urls || !urls.length) return;
-            imgEl.style.visibility = 'hidden';
-            const tryNext = (idx) => {
-                if (idx >= urls.length) return;
-                const tester = new Image();
-                tester.onload  = () => { imgEl.src = urls[idx]; imgEl.style.visibility = 'visible'; };
-                tester.onerror = () => tryNext(idx + 1);
-                tester.src = urls[idx];
+            
+            let currentIdx = 0;
+            imgEl.style.visibility = 'hidden'; // 로딩 전엔 숨김
+            
+            imgEl.onerror = () => {
+                currentIdx++;
+                if (currentIdx < urls.length) {
+                    imgEl.src = urls[currentIdx];
+                }
             };
-            tryNext(0);
+            imgEl.onload = () => {
+                imgEl.style.visibility = 'visible';
+            };
+            
+            imgEl.src = urls[currentIdx];
         },
 
         renderMoveButtons() {

@@ -278,3 +278,17 @@ app.post('/api/players', express.json(), async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
+
+// PokeAPI Proxy (학교 와이파이 차단 우회용)
+app.get('/api/pokeapi/*', async (req, res) => {
+    const subPath = req.params[0];
+    const targetUrl = `https://pokeapi.co/api/v2/${subPath}`;
+    try {
+        const response = await fetch(targetUrl);
+        if (!response.ok) return res.status(response.status).send('API Error');
+        const data = await response.json();
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: 'Proxy failed', details: e.message });
+    }
+});

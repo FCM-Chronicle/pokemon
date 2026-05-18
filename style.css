@@ -1606,24 +1606,24 @@ body {
     border-radius: 6px;
     padding: 10px 4px;
     font-family: 'Press Start 2P', monospace;
-    font-size: 12px;
+    font-size: 14px; /* 글자 크기 대폭 확대 */
     font-weight: 900;
     color: #fff;
-    text-shadow: 2px 2px 0px #000;
+    text-shadow: 2px 2px 1px #000;
     cursor: pointer;
     text-transform: capitalize;
     transition: background 0.15s;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
 }
 .move-btn:hover:not(:disabled) { filter: brightness(1.2); }
 .move-btn:active { transform: scale(0.96); }
 .move-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.move-btn .m-name { margin-bottom: 2px; display: block; }
-.move-btn .m-info { font-size: 8px; opacity: 0.9; text-shadow: none; }
+.move-btn .m-name { display: block; line-height: 1.2; }
+.move-btn .m-info { display: none; } /* 공격력 정보 숨김 */
 
 .move-btn.type-fire { background-color: #F08030; }
 .move-btn.type-water { background-color: #6890F0; }

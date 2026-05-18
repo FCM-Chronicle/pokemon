@@ -98,16 +98,30 @@ var game = {
             } catch (_) {}
 
             const allMoves    = data.moves.map(m => m.move.name);
-            const pickedMoveNames = allMoves.sort(() => Math.random() - 0.5).slice(0, 4);
-            const moveDetails = await Promise.all(pickedMoveNames.map(name => this.fetchMoveDetail(name)));
+            
+            // 초기 포켓몬(스타터 등)은 초반용 기술(위력 55 이하) 위주로 무작위 선별
+            const moveDetails = [];
+            const shuffledMoves = allMoves.sort(() => Math.random() - 0.5);
+            for (const name of shuffledMoves) {
+                if (moveDetails.length >= 4) break;
+                const detail = await this.fetchMoveDetail(name);
+                // 위력이 55 이하이거나, 남은 기술이 적어 어쩔 수 없는 경우 선택
+                if (detail.power <= 55 || moveDetails.length >= 3) {
+                    moveDetails.push(detail);
+                }
+            }
+
             const spriteUrls  = this.getSpriteUrls(data.id);
+
+            const baseStats = data.stats.reduce((acc, s) => ({ ...acc, [s.stat.name]: s.base_stat }), {});
+            const maxHp = this.calculateMaxHP(baseStats.hp, 5); // 기본 5레벨 기준
 
             const pokeData = {
                 id:          data.id,
                 name:        koName,
                 nameEn:      data.name,
                 types:       data.types.map(t => t.type.name),
-                stats:       data.stats.reduce((acc, s) => ({ ...acc, [s.stat.name]: s.base_stat }), {}),
+                stats:       { ...baseStats, hp: maxHp, baseHp: baseStats.hp },
                 moves:       moveDetails,
                 allMovePool: allMoves,
                 status:      null, // Initial status
@@ -187,7 +201,7 @@ var game = {
     // 15렙: 1진화, 30렙: 2진화
     async checkEvolution(pokemon) {
         const level = pokemon.level || 1;
-        if (level !== 15 && level !== 30) return false;
+        if (level < 15) return false; // 최소 진화 레벨 미만
 
         const chain = await game.fetchEvoChain(pokemon.id);
         if (!chain || chain.length < 2) return false;
@@ -196,9 +210,12 @@ var game = {
         if (currentIdx < 0) return false;
 
         let targetIdx = -1;
-        if (level === 15 && currentIdx === 0 && chain.length >= 2) targetIdx = 1;
-        if (level === 30 && currentIdx <= 1 && chain.length >= 3) targetIdx = 2;
-        if (targetIdx < 0) return false;
+        // 30렙 이상이고 아직 최종진화(2단계) 전이면
+        if (level >= 30 && currentIdx <= 1 && chain.length >= 3) targetIdx = 2;
+        // 15렙 이상이고 아직 진화 전(0단계)이면
+        else if (level >= 15 && currentIdx === 0 && chain.length >= 2) targetIdx = 1;
+
+        if (targetIdx < 0 || targetIdx === currentIdx) return false;
 
         const evoId   = chain[targetIdx];
         const evoData = await game.fetchPokemon(evoId);
@@ -209,11 +226,11 @@ var game = {
         // 스탯/이름/타입/스프라이트 업데이트, 닉네임·레벨·경험치·기술 유지
         const oldHpRatio = pokemon.currentHp / pokemon.stats.hp;
         pokemon.id        = evoData.id;
-        pokemon.currentHp = Math.floor(evoData.stats.hp * oldHpRatio); // Maintain HP ratio
+        pokemon.stats     = { ...evoData.stats, hp: this.calculateMaxHP(evoData.stats.baseHp, level) };
+        pokemon.currentHp = Math.max(1, Math.floor(pokemon.stats.hp * oldHpRatio));
         pokemon.name      = evoData.name;
         pokemon.nameEn    = evoData.nameEn;
         pokemon.types     = evoData.types;
-        pokemon.stats     = evoData.stats;
         pokemon.spriteUrls= evoData.spriteUrls;
         pokemon.spriteUrl = evoData.spriteUrls[0];
 
@@ -282,8 +299,20 @@ var game = {
         const available = pool.filter(mName => !currentMoves.some(cm => cm.nameEn === mName));
         if (available.length === 0) return;
 
-        const newMoveName = available[Math.floor(Math.random() * available.length)];
-        const newMove = await this.fetchMoveDetail(newMoveName);
+        // 레벨에 따른 기술 위력 제한 (15렙 미만: 55, 30렙 미만: 80, 그 이상: 무제한)
+        const maxPower = pokemon.level < 15 ? 55 : (pokemon.level < 30 ? 80 : 999);
+        const shuffledAvailable = available.sort(() => Math.random() - 0.5);
+        
+        let newMove = null;
+        for (const name of shuffledAvailable) {
+            const detail = await this.fetchMoveDetail(name);
+            if (detail.power <= maxPower) {
+                newMove = detail;
+                break;
+            }
+        }
+        // 적절한 위력의 기술을 못 찾았다면 가장 첫 번째 기술이라도 배움
+        if (!newMove) newMove = await this.fetchMoveDetail(shuffledAvailable[0]);
 
         if (currentMoves.length < 4) {
             pokemon.moves.push(newMove);
@@ -330,7 +359,8 @@ var game = {
                 }
             }
 
-            wildPokeCopy.currentHp = wildPokeCopy.stats.hp; // Full HP for wild
+            wildPokeCopy.stats.hp = this.calculateMaxHP(wildPokeCopy.stats.baseHp, wildPokeCopy.level);
+            wildPokeCopy.currentHp = wildPokeCopy.stats.hp;
             wildPokeCopy.status = null;
             wildPokeCopy.statusTurns = 0;
 
@@ -339,13 +369,8 @@ var game = {
             const maxLv  = pLv + 3;
             wildPokeCopy.level = Math.floor(Math.random() * (maxLv - minLv + 1)) + minLv;
 
-            // Determine turn order based on speed
-            let firstTurnPlayer = true; // Default to player
-            if (playerPoke.stats.speed < wildPokeCopy.stats.speed) {
-                firstTurnPlayer = false;
-            } else if (playerPoke.stats.speed === wildPokeCopy.stats.speed) {
-                firstTurnPlayer = Math.random() < 0.5; // Random if speeds are equal
-            }
+            // 사용자의 요청: 무조건 플레이어 선공
+            let firstTurnPlayer = true;
 
             playerPoke.status = null; // Clear player's status at start of new battle
             playerPoke.statusTurns = 0;
@@ -366,11 +391,6 @@ var game = {
             game.ui.showBattleScene(true);
             game.ui.updateBattleUI();
             game.ui.log(`야생 ${wildPokeCopy.name}이(가) 나타났다!`);
-            
-            // 상대방이 더 빠를 경우 적의 턴으로 시작
-            if (!firstTurnPlayer) {
-                setTimeout(() => this.opponentTurn(), 1000);
-            }
         },
 
         async startPvpBattle(opponentId, opponentName, opponentTeam, isChallenger) {

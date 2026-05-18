@@ -21,6 +21,11 @@ const FIGHT_PATH = 'fight.json';
 
 const PORT = process.env.PORT || 3000;
 
+// 서버 시작 시 토큰 체크
+if (!GITHUB_TOKEN) {
+    console.warn("경고: GITHUB_TOKEN(POKEGAME) 환경 변수가 설정되지 않았습니다.");
+}
+
 app.use(express.static(path.join(__dirname)));
 
 let clients = new Map(); // id -> { ws, name, team }
@@ -150,12 +155,16 @@ async function safeWriteToGithub(readFn, modifyAndWriteFn, payloadToApply, retry
             const { data: currentData, sha } = await readFn(); // Read current data and SHA
             const res = await modifyAndWriteFn(currentData, sha, payloadToApply); // Modify and write
             if (res.ok) return true;
-            
+
+            if (res.status === 409) {
+                console.log(`GitHub 충돌 발생 (재시도 ${i+1}/3)...`);
+                continue;
+            }
+
             // 409 외의 에러 로그 출력 (예: 401 권한부족, 404 경로오류)
             const errorText = await res.text();
             console.error(`GitHub API Error (${res.status}):`, errorText);
-            
-            if (res.status === 409 && i < retryCount - 1) continue; // 충돌 시 재시도
+            break; 
         } catch (e) {
             console.error("GitHub Write Error:", e);
         }
@@ -220,11 +229,17 @@ async function readPlayersFromGithub() {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${PLAYERS_PATH}`, {
         headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json' }
     });
-    if (res.status === 404) return { data: { players: [] }, sha: null };
+    
+    if (res.status === 404) return { data: [], sha: null };
     if (!res.ok) throw new Error(`GitHub API 불러오기 실패: ${res.status}`);
+    
     const json = await res.json();
     const content = Buffer.from(json.content, 'base64').toString('utf8');
-    return { data: JSON.parse(content), sha: json.sha };
+    try {
+        return { data: JSON.parse(content), sha: json.sha };
+    } catch (e) {
+        return { data: [], sha: json.sha }; // JSON 파싱 실패 시 빈 배열 반환
+    }
 }
 
 async function writePlayersToGithub(players, sha) {
@@ -304,7 +319,7 @@ app.post('/api/players', express.json(), async (req, res) => {
                 let players = Array.isArray(currentPlayersData) ? currentPlayersData : (currentPlayersData?.players || []);
                 const idx = players.findIndex(p => p.name === newPlayer.name);
                 if (idx >= 0) players[idx] = newPlayer; else players.push(newPlayer);
-                return await writePlayersToGithub({ players }, sha); // 저장 시에는 표준 객체 구조로 저장
+                return await writePlayersToGithub(players, sha); // 배열 형태로 직접 저장
             },
             req.body // payloadToApply (the new player object)
         );

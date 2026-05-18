@@ -220,7 +220,8 @@ async function readPlayersFromGithub() {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${PLAYERS_PATH}`, {
         headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json' }
     });
-    if (!res.ok) return { data: { players: [] }, sha: null };
+    if (res.status === 404) return { data: { players: [] }, sha: null };
+    if (!res.ok) throw new Error(`GitHub API 불러오기 실패: ${res.status}`);
     const json = await res.json();
     const content = Buffer.from(json.content, 'base64').toString('utf8');
     return { data: JSON.parse(content), sha: json.sha };

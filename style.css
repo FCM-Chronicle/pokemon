@@ -1602,14 +1602,14 @@ body {
 }
 .move-btn {
     background: #444;
-    border: 2px solid #222;
+    border: 3px solid #000;
     border-radius: 6px;
     padding: 10px 4px;
     font-family: 'Press Start 2P', monospace;
-    font-size: 11px; /* 글자 크기 약간 키움 */
-    font-weight: bold;
+    font-size: 12px;
+    font-weight: 900;
     color: #fff;
-    text-shadow: 1px 1px 1px #000;
+    text-shadow: 2px 2px 0px #000;
     cursor: pointer;
     text-transform: capitalize;
     transition: background 0.15s;
@@ -1621,6 +1621,9 @@ body {
 .move-btn:hover:not(:disabled) { filter: brightness(1.2); }
 .move-btn:active { transform: scale(0.96); }
 .move-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.move-btn .m-name { margin-bottom: 2px; display: block; }
+.move-btn .m-info { font-size: 8px; opacity: 0.9; text-shadow: none; }
 
 .move-btn.type-fire { background-color: #F08030; }
 .move-btn.type-water { background-color: #6890F0; }

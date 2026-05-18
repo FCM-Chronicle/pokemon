@@ -366,6 +366,11 @@ var game = {
             game.ui.showBattleScene(true);
             game.ui.updateBattleUI();
             game.ui.log(`야생 ${wildPokeCopy.name}이(가) 나타났다!`);
+            
+            // 상대방이 더 빠를 경우 적의 턴으로 시작
+            if (!firstTurnPlayer) {
+                setTimeout(() => this.opponentTurn(), 1000);
+            }
         },
 
         async startPvpBattle(opponentId, opponentName, opponentTeam, isChallenger) {
@@ -395,8 +400,10 @@ var game = {
             b.isPlayerTurn = false;
 
             const move = b.playerPoke.moves.find(m => (m.name || m) === moveName);
-            const movePower = (move && move.power) ? move.power : 40;
-            const moveType = (move && move.type) ? move.type : 'normal';
+            if (!move) { b.isPlayerTurn = true; return; }
+
+            const movePower = move.power || 40;
+            const moveType = move.type || 'normal';
             const typeMod = this.getTypeMultiplier(moveType, b.opponent.types);
 
             const damage = this.calculateDamage(b.playerPoke.stats.attack, b.opponent.stats.defense, movePower, b.playerPoke.level || 5, typeMod);
@@ -1631,8 +1638,9 @@ window.addEventListener('DOMContentLoaded', () => {
         if (idInput && pwInput) {
             idInput.value = savedId;
             pwInput.value = savedPw;
-            // 약간의 지연 후 자동 로그인 시도
-            setTimeout(() => game.auth.login(), 500);
+            // 지맘대로 로그인되는 것 방지: 
+            // 사용자가 등록/로그인 버튼을 직접 누르도록 호출부 제거
+            // setTimeout(() => game.auth.login(), 500); 
         }
     }
 });

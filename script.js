@@ -37,6 +37,12 @@ var game = {
         }
     },
 
+    // 체력 계산 공식 (실제 게임 공식을 단순화)
+    calculateMaxHP(baseHp, level) {
+        // 레벨 5일 때 약 1.5배, 레벨 100일 때 약 4배 정도의 체력을 갖게 조정
+        return Math.floor(baseHp * (1 + (level || 5) / 15) + (level || 5) + 20);
+    },
+
     db: {
     async getPlayerData(name) {
         try {
@@ -104,17 +110,17 @@ var game = {
             const shuffledMoves = allMoves.sort(() => Math.random() - 0.5);
             for (const name of shuffledMoves) {
                 if (moveDetails.length >= 4) break;
-                const detail = await this.fetchMoveDetail(name);
+                const detail = await game.fetchMoveDetail(name);
                 // 위력이 55 이하이거나, 남은 기술이 적어 어쩔 수 없는 경우 선택
                 if (detail.power <= 55 || moveDetails.length >= 3) {
                     moveDetails.push(detail);
                 }
             }
 
-            const spriteUrls  = this.getSpriteUrls(data.id);
+            const spriteUrls  = game.getSpriteUrls(data.id);
 
             const baseStats = data.stats.reduce((acc, s) => ({ ...acc, [s.stat.name]: s.base_stat }), {});
-            const maxHp = this.calculateMaxHP(baseStats.hp, 5); // 기본 5레벨 기준
+            const maxHp = game.calculateMaxHP(baseStats.hp, 5); // 기본 5레벨 기준
 
             const pokeData = {
                 id:          data.id,
@@ -129,8 +135,8 @@ var game = {
                 spriteUrls:  spriteUrls,
                 spriteUrl:   spriteUrls[0],
             };
-            this.state.pokeCache[id] = pokeData;
-            this.db.savePokemonCacheToServer(this.state.pokeCache);
+            game.state.pokeCache[id] = pokeData;
+            game.db.savePokemonCacheToServer(game.state.pokeCache);
             return pokeData;
         } catch (e) {
             console.error('API 오류:', e);
@@ -168,7 +174,7 @@ var game = {
     // ── 진화 체인 가져오기 ──────────────────────────────
     // 반환값: [base_id, stage1_id, stage2_id] (없으면 null)
     async fetchEvoChain(pokemonId) {
-        if (this.state.evoChainCache[pokemonId]) return this.state.evoChainCache[pokemonId];
+        if (game.state.evoChainCache[pokemonId]) return game.state.evoChainCache[pokemonId];
         try {
             const specRes  = await fetch(`/api/pokeapi/pokemon-species/${pokemonId}`);
             if (!specRes.ok) return null;
@@ -190,7 +196,7 @@ var game = {
             // chain = [base, evo1, evo2] (길이 1~3)
 
             // 이 포켓몬이 속한 체인의 인덱스 찾아 캐시 (chain 전체에 적용)
-            chain.forEach(id => { this.state.evoChainCache[id] = chain; });
+            chain.forEach(id => { game.state.evoChainCache[id] = chain; });
             return chain;
         } catch (e) {
             return null;
@@ -226,7 +232,7 @@ var game = {
         // 스탯/이름/타입/스프라이트 업데이트, 닉네임·레벨·경험치·기술 유지
         const oldHpRatio = pokemon.currentHp / pokemon.stats.hp;
         pokemon.id        = evoData.id;
-        pokemon.stats     = { ...evoData.stats, hp: this.calculateMaxHP(evoData.stats.baseHp, level) };
+        pokemon.stats     = { ...evoData.stats, hp: game.calculateMaxHP(evoData.stats.baseHp, level) };
         pokemon.currentHp = Math.max(1, Math.floor(pokemon.stats.hp * oldHpRatio));
         pokemon.name      = evoData.name;
         pokemon.nameEn    = evoData.nameEn;
@@ -305,14 +311,14 @@ var game = {
         
         let newMove = null;
         for (const name of shuffledAvailable) {
-            const detail = await this.fetchMoveDetail(name);
+            const detail = await game.fetchMoveDetail(name);
             if (detail.power <= maxPower) {
                 newMove = detail;
                 break;
             }
         }
         // 적절한 위력의 기술을 못 찾았다면 가장 첫 번째 기술이라도 배움
-        if (!newMove) newMove = await this.fetchMoveDetail(shuffledAvailable[0]);
+        if (!newMove) newMove = await game.fetchMoveDetail(shuffledAvailable[0]);
 
         if (currentMoves.length < 4) {
             pokemon.moves.push(newMove);
@@ -359,7 +365,7 @@ var game = {
                 }
             }
 
-            wildPokeCopy.stats.hp = this.calculateMaxHP(wildPokeCopy.stats.baseHp, wildPokeCopy.level);
+            wildPokeCopy.stats.hp = game.calculateMaxHP(wildPokeCopy.stats.baseHp, wildPokeCopy.level);
             wildPokeCopy.currentHp = wildPokeCopy.stats.hp;
             wildPokeCopy.status = null;
             wildPokeCopy.statusTurns = 0;
@@ -1205,10 +1211,12 @@ var game = {
             document.body.appendChild(overlay);
 
             const starters = await Promise.all(starterIds.map(id => game.fetchPokemon(id)));
+            // fetchPokemon 실패 시 null이 섞여있을 수 있으므로 필터링
+            const validStarters = starters.filter(p => p !== null);
             const grid = document.getElementById('starter-grid');
             if (!grid) return;
 
-            grid.innerHTML = starters.map((p, i) => `
+            grid.innerHTML = validStarters.map((p, i) => `
                 <div class="starter-card type-bg-${p.types[0]}" onclick="game.ui._selectStarter(${i})">
                     <div class="starter-poke-aura type-${p.types[0]}"></div>
                     <img class="starter-sprite" alt="${p.name}" data-poke-id="${p.id}" data-poke-type="official" style="visibility:hidden" />
@@ -1225,7 +1233,7 @@ var game = {
             `).join('');
 
             game.ui.applySprites(grid);
-            this._starterData = starters;
+            game.ui._starterData = validStarters; // 필터링된 데이터를 저장하여 인덱스 일치시킴
         },
 
         _starterData: null,

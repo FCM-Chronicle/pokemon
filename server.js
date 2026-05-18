@@ -229,8 +229,12 @@ async function readPlayersFromGithub() {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${PLAYERS_PATH}`, {
         headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json' }
     });
-    
-    if (res.status === 404) return { data: [], sha: null };
+
+    if (res.status === 401 || res.status === 403) {
+        console.error("GitHub 토큰 권한 오류: 토큰이 유효하지 않거나 권한이 부족합니다.");
+        throw new Error("GitHub Auth Failed");
+    }
+    if (res.status === 404) return { data: [], sha: null }; // 파일이 없으면 새 파일 생성 준비
     if (!res.ok) throw new Error(`GitHub API 불러오기 실패: ${res.status}`);
     
     const json = await res.json();
@@ -301,8 +305,10 @@ async function writeFightToGithub(data, sha) {
 // 플레이어 불러오기
 app.get('/api/players/:id', async (req, res) => {
     try {
-        const { data } = await readPlayersFromGithub(); // data는 { players: [...] } 형태
-        const player = (data?.players || []).find(p => p.name === req.params.id);
+        const { data } = await readPlayersFromGithub();
+        // 배열 형태와 객체 { players: [] } 형태 모두 대응
+        const playerList = Array.isArray(data) ? data : (data?.players || []);
+        const player = playerList.find(p => p.name === req.params.id);
         res.json({ player: player || null });
     } catch (e) {
         res.json({ player: null }); // 에러 시 null 반환하여 클라이언트 fallback 유도

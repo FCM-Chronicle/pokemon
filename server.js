@@ -15,7 +15,7 @@ const POKE_FILE = path.join(__dirname, 'poke.json');
 const GITHUB_TOKEN = process.env.POKEGAME; // 발급받은 GitHub API 키 변수 활용
 const GITHUB_OWNER = 'FCM-Chronicle';
 const GITHUB_REPO = 'pokemon';
-const PLAYERS_PATH = 'players.json';
+const PLAYERS_PATH = 'player.json'; // 파일명 일치시킴
 const POKE_PATH = 'poke.json';
 const FIGHT_PATH = 'fight.json';
 
@@ -150,6 +150,11 @@ async function safeWriteToGithub(readFn, modifyAndWriteFn, payloadToApply, retry
             const { data: currentData, sha } = await readFn(); // Read current data and SHA
             const res = await modifyAndWriteFn(currentData, sha, payloadToApply); // Modify and write
             if (res.ok) return true;
+            
+            // 409 외의 에러 로그 출력 (예: 401 권한부족, 404 경로오류)
+            const errorText = await res.text();
+            console.error(`GitHub API Error (${res.status}):`, errorText);
+            
             if (res.status === 409 && i < retryCount - 1) continue; // 충돌 시 재시도
         } catch (e) {
             console.error("GitHub Write Error:", e);
@@ -222,11 +227,14 @@ async function readPlayersFromGithub() {
 }
 
 async function writePlayersToGithub(players, sha) {
-    const content = Buffer.from(JSON.stringify(players, null, 2)).toString('base64');
+    const content = Buffer.from(JSON.stringify(players, null, 2), 'utf8').toString('base64');
+    const body = { message: 'update players', content };
+    if (sha) body.sha = sha;
+
     return await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${PLAYERS_PATH}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'update players', content, sha })
+        body: JSON.stringify(body)
     });
 }
 
@@ -241,11 +249,14 @@ async function readPokeFromGithub() {
 }
 
 async function writePokeToGithub(cache, sha) {
-    const content = Buffer.from(JSON.stringify(cache, null, 2)).toString('base64');
+    const content = Buffer.from(JSON.stringify(cache, null, 2), 'utf8').toString('base64');
+    const body = { message: 'update poke cache', content };
+    if (sha) body.sha = sha;
+
     return await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${POKE_PATH}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'update poke cache', content, sha })
+        body: JSON.stringify(body)
     });
 }
 
@@ -260,11 +271,14 @@ async function readFightFromGithub() {
 }
 
 async function writeFightToGithub(data, sha) {
-    const content = Buffer.from(JSON.stringify(data, null, 2)).toString('base64');
+    const content = Buffer.from(JSON.stringify(data, null, 2), 'utf8').toString('base64');
+    const body = { message: 'update fight data', content };
+    if (sha) body.sha = sha;
+
     return await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${FIGHT_PATH}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'update fight data', content, sha })
+        body: JSON.stringify(body)
     });
 }
 
@@ -285,10 +299,11 @@ app.post('/api/players', express.json(), async (req, res) => {
         const success = await safeWriteToGithub(
             readPlayersFromGithub, // readFn
             async (currentPlayersData, sha, newPlayer) => { // modifyAndWriteFn
-                const players = currentPlayersData?.players || [];
+                // 구조 유연하게 처리
+                let players = Array.isArray(currentPlayersData) ? currentPlayersData : (currentPlayersData?.players || []);
                 const idx = players.findIndex(p => p.name === newPlayer.name);
                 if (idx >= 0) players[idx] = newPlayer; else players.push(newPlayer);
-                return await writePlayersToGithub({ players }, sha);
+                return await writePlayersToGithub({ players }, sha); // 저장 시에는 표준 객체 구조로 저장
             },
             req.body // payloadToApply (the new player object)
         );

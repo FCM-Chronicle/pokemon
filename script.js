@@ -406,7 +406,6 @@ var game = {
             // 상성 로그 추가
             if (typeMod >= 2) logMsg += " 효과가 굉장했다!!";
             else if (typeMod > 0 && typeMod < 1) logMsg += " 효과가 별로인 듯하다...";
-            else if (typeMod > 0 && typeMod < 1) logMsg += " 효과가 별로인 듯하다...";
             else if (typeMod === 0) logMsg += " 효과가 없는 것 같다...";
             
             game.ui.log(logMsg);
@@ -426,12 +425,12 @@ var game = {
             }
 
             if (b.opponent.currentHp <= 0) {
-                const expGain = Math.floor(b.opponent.stats['special-attack'] * b.opponent.level / 7);
+                const spAtk = b.opponent.stats['special-attack'] || b.opponent.stats['attack'] || 50;
+                const expGain = Math.floor(spAtk * b.opponent.level / 7);
                 game.ui.log(`야생 ${b.opponent.name}이(가) 쓰러졌다! 경험치 ${expGain} 획득!`);
 
-                // ★ 경험치는 항상 저장 (레벨업 여부 무관)
+                // checkLevelUp 내부에서 savePlayerData를 한 번만 호출하도록 함
                 await game.checkLevelUp(b.playerPoke, expGain);
-                game.db.savePlayerData(game.state.player);
 
                 setTimeout(() => this.endBattle(true), 1500);
                 return;
@@ -649,8 +648,11 @@ var game = {
         endBattle(isWin) {
             const b = game.state.currentBattle;
             if (!b) return;
+            
+            // 즉시 턴을 잠궈서 중복 클릭 방지
+            b.isPlayerTurn = false;
 
-            if (isWin !== null && game.state.player) {
+            if (isWin !== null && game.state.player && isWin !== undefined) {
                 // 판수 증가
                 game.state.player.totalGames = (game.state.player.totalGames || 0) + 1;
                 
@@ -675,11 +677,11 @@ var game = {
             }
 
             game.state.currentBattle = null;
-            game.ui.showBattleScene(false);
             if (game.state.player) {
                 game.state.player.team.forEach(p => { if (!p.currentHp || p.currentHp <= 0) p.currentHp = p.stats.hp; });
-                game.db.savePlayerData(game.state.player);
+                game.db.savePlayerData(game.state.player); // 비동기 저장 시작
             }
+            game.ui.showBattleScene(false);
             game.ui.renderActiveTab();
         },
 

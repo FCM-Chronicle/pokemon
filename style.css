@@ -5,8 +5,14 @@
     --fire: #F08030; --water: #6890F0; --grass: #78C850; --electric: #F8D030;
 }
 
-body { margin: 0; background: var(--bg); color: white; font-family: 'Noto Sans KR', sans-serif; }
-.pixel { font-family: 'Press Start 2P', cursive; }
+body { margin: 0; background: var(--bg); color: white; font-family: 'Noto Sans KR', sans-serif; -webkit-font-smoothing: antialiased; }
+.pixel { 
+    font-family: 'Press Start 2P', monospace !important;
+    /* 글씨를 더 굵게 보이기 위해 다중 그림자 적용 */
+    text-shadow: 2px 2px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000, 
+                 0px 1px 0px #000, 0px -1px 0px #000, 1px 0px 0px #000, -1px 0px 0px #000;
+    letter-spacing: 0px;
+}
 .hidden { display: none !important; }
 
 /* 배틀 씬 배치 */
@@ -1574,7 +1580,7 @@ body {
     border-top: 3px solid #333;
     padding: 12px 16px;
     font-family: 'Press Start 2P', monospace;
-    font-size: 9px;
+    font-size: 11px;
     color: #111;
     min-height: 50px;
     line-height: 1.6;
@@ -1600,9 +1606,10 @@ body {
     border-radius: 6px;
     padding: 10px 4px;
     font-family: 'Press Start 2P', monospace;
-    font-size: 9px;
+    font-size: 11px; /* 글자 크기 약간 키움 */
+    font-weight: bold;
     color: #fff;
-    text-shadow: 1px 1px 0px #000;
+    text-shadow: 1px 1px 1px #000;
     cursor: pointer;
     text-transform: capitalize;
     transition: background 0.15s;

@@ -142,11 +142,13 @@ async function sendRanking(ws) {
 }
 
 // GitHub 저장 재시도 래퍼 함수 (충돌 방지)
-async function safeWriteToGithub(readFn, writeFn, updateData, retryCount = 3) {
+// readFn: () => Promise<{ data: any, sha: string }>
+// modifyAndWriteFn: (currentData: any, sha: string, payloadToApply: any) => Promise<Response>
+async function safeWriteToGithub(readFn, modifyAndWriteFn, payloadToApply, retryCount = 3) {
     for (let i = 0; i < retryCount; i++) {
         try {
-            const { sha } = await readFn();
-            const res = await writeFn(updateData, sha);
+            const { data: currentData, sha } = await readFn(); // Read current data and SHA
+            const res = await modifyAndWriteFn(currentData, sha, payloadToApply); // Modify and write
             if (res.ok) return true;
             if (res.status === 409 && i < retryCount - 1) continue; // 충돌 시 재시도
         } catch (e) {
@@ -157,11 +159,25 @@ async function safeWriteToGithub(readFn, writeFn, updateData, retryCount = 3) {
 }
 
 async function writeFightData(data) {
-    await safeWriteToGithub(readFightFromGithub, writeFightToGithub, data);
+    await safeWriteToGithub(
+        readFightFromGithub,
+        async (currentData, sha, newFightData) => {
+            return await writeFightToGithub(newFightData, sha);
+        },
+        data
+    );
 }
 
 async function writePokeCache(cache) {
-    await safeWriteToGithub(readPokeFromGithub, writePokeToGithub, cache);
+    await safeWriteToGithub(
+        readPokeFromGithub,
+        async (currentData, sha, newCacheData) => {
+            // The newCacheData is already the complete cache object to be written
+            // currentData는 여기서는 무시됩니다. 전체 캐시를 덮어쓰기 때문입니다.
+            return await writePokeToGithub(newCacheData, sha);
+        },
+        cache
+    );
 }
 
 async function updateFightData({ winnerId, loserId, winnerName, loserName }) {
@@ -266,14 +282,18 @@ app.get('/api/players/:id', async (req, res) => {
 // 플레이어 저장
 app.post('/api/players', express.json(), async (req, res) => {
     try {
-        await safeWriteToGithub(readPlayersFromGithub, async (updateData, sha) => {
-            const { data } = await readPlayersFromGithub();
-            const players = data?.players || [];
-            const idx = players.findIndex(p => p.name === req.body.name);
-            if (idx >= 0) players[idx] = req.body; else players.push(req.body);
-            return await writePlayersToGithub({ players }, sha);
-        }, req.body);
-        res.json({ ok: true });
+        const success = await safeWriteToGithub(
+            readPlayersFromGithub, // readFn
+            async (currentPlayersData, sha, newPlayer) => { // modifyAndWriteFn
+                const players = currentPlayersData?.players || [];
+                const idx = players.findIndex(p => p.name === newPlayer.name);
+                if (idx >= 0) players[idx] = newPlayer; else players.push(newPlayer);
+                return await writePlayersToGithub({ players }, sha);
+            },
+            req.body // payloadToApply (the new player object)
+        );
+        if (!success) throw new Error('Failed to save player data to GitHub after retries.');
+        res.json({ ok: true }); // Only send success if write was successful
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

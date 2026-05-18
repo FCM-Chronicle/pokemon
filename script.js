@@ -395,12 +395,21 @@ var game = {
             b.isPlayerTurn = false;
 
             const move = b.playerPoke.moves.find(m => (m.name || m) === moveName);
-            const movePower = move?.power || 40;
-            const typeMod = this.getTypeMultiplier(move?.type || 'normal', b.opponent.types);
+            const movePower = (move && move.power) ? move.power : 40;
+            const moveType = (move && move.type) ? move.type : 'normal';
+            const typeMod = this.getTypeMultiplier(moveType, b.opponent.types);
 
             const damage = this.calculateDamage(b.playerPoke.stats.attack, b.opponent.stats.defense, movePower, b.playerPoke.level || 5, typeMod);
             b.opponent.currentHp = Math.max(0, b.opponent.currentHp - damage);
-            game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}의 ${moveName}! ${damage}의 데미지!`);
+            
+            let logMsg = `${b.playerPoke.nickname || b.playerPoke.name}의 ${moveName}! ${damage}의 데미지!`;
+            // 상성 로그 추가
+            if (typeMod >= 2) logMsg += " 효과가 굉장했다!!";
+            else if (typeMod > 0 && typeMod < 1) logMsg += " 효과가 별로인 듯하다...";
+            else if (typeMod > 0 && typeMod < 1) logMsg += " 효과가 별로인 듯하다...";
+            else if (typeMod === 0) logMsg += " 효과가 없는 것 같다...";
+            
+            game.ui.log(logMsg);
             game.ui.updateBattleUI();
             
             if (b.type === 'pvp') {
@@ -428,30 +437,41 @@ var game = {
                 return;
             }
 
-            setTimeout(() => {
-                const oppMove = b.opponent.moves[Math.floor(Math.random() * b.opponent.moves.length)];
-                const oppMovePower = oppMove?.power || 35;
-                const oppMoveType = oppMove?.type || 'normal';
-                const oppTypeMod = game.battle.getTypeMultiplier(oppMoveType, b.playerPoke.types);
-                const oppDamage = game.battle.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, oppMovePower, b.opponent.level, oppTypeMod);
-                b.playerPoke.currentHp = Math.max(0, (b.playerPoke.currentHp || b.playerPoke.stats.hp) - oppDamage);
-                game.ui.log(`야생 ${b.opponent.name}의 공격! ${oppDamage}의 데미지!`);
-                game.ui.updateBattleUI();
-                if (b.playerPoke.currentHp <= 0) {
-                    game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}이(가) 쓰러졌다...`);
-                    const aliveIndex = game.state.player.team.findIndex(
-                        p => p !== b.playerPoke && (p.currentHp || p.stats.hp) > 0
-                    );
-                    if (aliveIndex >= 0) {
-                        setTimeout(() => game.ui.showForcedSwitch(), 800);
-                    } else {
-                        setTimeout(() => this.endBattle(false), 1500);
-                    }
-                } else {
-                    b.isPlayerTurn = true;
-                    game.ui.renderMoveButtons();
-                }
-            }, 1000);
+            setTimeout(() => this.opponentTurn(), 1000);
+        },
+
+        opponentTurn() {
+            const b = game.state.currentBattle;
+            if (!b) return;
+
+            // 기술 목록이 없을 경우 대비
+            const moves = (b.opponent.moves && b.opponent.moves.length > 0) ? b.opponent.moves : ['tackle'];
+            const oppMove = moves[Math.floor(Math.random() * moves.length)];
+            
+            const oppMoveName = oppMove.name || oppMove;
+            const oppMovePower = oppMove.power || 35;
+            const oppMoveType = oppMove.type || 'normal';
+            const oppTypeMod = this.getTypeMultiplier(oppMoveType, b.playerPoke.types);
+            const oppDamage = this.calculateDamage(b.opponent.stats.attack, b.playerPoke.stats.defense, oppMovePower, b.opponent.level, oppTypeMod);
+            
+            b.playerPoke.currentHp = Math.max(0, (b.playerPoke.currentHp || b.playerPoke.stats.hp) - oppDamage);
+            
+            let logMsg = `야생 ${b.opponent.name}의 ${oppMoveName}! ${oppDamage}의 데미지!`;
+            if (oppTypeMod >= 2) logMsg += " 효과가 굉장했다!!";
+            else if (oppTypeMod > 0 && oppTypeMod < 1) logMsg += " 효과가 별로인 듯하다...";
+            
+            game.ui.log(logMsg);
+            game.ui.updateBattleUI();
+
+            if (b.playerPoke.currentHp <= 0) {
+                game.ui.log(`${b.playerPoke.nickname || b.playerPoke.name}이(가) 쓰러졌다...`);
+                const aliveIndex = game.state.player.team.findIndex(p => p !== b.playerPoke && (p.currentHp || p.stats.hp) > 0);
+                if (aliveIndex >= 0) setTimeout(() => game.ui.showForcedSwitch(), 800);
+                else setTimeout(() => this.endBattle(false), 1500);
+            } else {
+                b.isPlayerTurn = true;
+                game.ui.renderMoveButtons();
+            }
         },
 
         tryCatch() {
@@ -1579,6 +1599,10 @@ var game = {
         game.ui.showToast(`${id}님, 환영합니다!`);
     }
 
+    // 로그인 정보 로컬 스토리지 저장 (자동 로그인용)
+    localStorage.setItem('pokesave_user', id);
+    localStorage.setItem('pokesave_pw', pw);
+
     await game.db.savePlayerData(player);
     game.state.player = player;
     document.getElementById('auth-modal').classList.add('hidden');
@@ -1593,6 +1617,24 @@ var game = {
 }
     }
 };
+
+// 페이지 로드 시 자동 로그인 확인
+window.addEventListener('DOMContentLoaded', () => {
+    const savedId = localStorage.getItem('pokesave_user');
+    const savedPw = localStorage.getItem('pokesave_pw');
+    
+    if (savedId && savedPw) {
+        const idInput = document.getElementById('login-id');
+        const pwInput = document.getElementById('login-pw');
+        if (idInput && pwInput) {
+            idInput.value = savedId;
+            pwInput.value = savedPw;
+            // 약간의 지연 후 자동 로그인 시도
+            setTimeout(() => game.auth.login(), 500);
+        }
+    }
+});
+
 // ── game 객체 밖 ──────────────────────────────
 function pokeFallback(img) {
     const id = img.dataset.id;

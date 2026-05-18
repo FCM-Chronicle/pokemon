@@ -342,27 +342,26 @@ var game = {
             }
 
             const teamMaxLv = game.getTeamMaxLevel();
-            const wildId    = game.getWildPokemonId(teamMaxLv);
-            const wildPoke  = await game.fetchPokemon(wildId);
+            let wildId = game.getWildPokemonId(teamMaxLv);
+
+            // 진화 체인을 가져와 무조건 기본형(Stage 0)부터 시작하도록 교정
+            const chain = await game.fetchEvoChain(wildId);
+            if (chain && chain.length > 0) {
+                wildId = chain[0];
+            }
+
+            const wildPoke = await game.fetchPokemon(wildId);
             if (!wildPoke) return;
 
-            const wildPokeCopy = { ...wildPoke, moves: [...(wildPoke.moves || [])] };
+            let wildPokeCopy = { ...wildPoke, moves: [...(wildPoke.moves || [])] };
 
-            // 팀 최고렙 기준 진화 단계 조정
-            // 15렙 이상이면 1진화 포켓몬도 나올 수 있음 (50% 확률)
-            // 30렙 이상이면 2진화 포켓몬도 나올 수 있음 (30% 확률)
-            if (teamMaxLv >= 30 && Math.random() < 0.30) {
-                const chain = await game.fetchEvoChain(wildId);
-                if (chain && chain.length >= 3) {
-                    const evo2Data = await game.fetchPokemon(chain[2]);
-                    if (evo2Data) Object.assign(wildPokeCopy, { ...evo2Data, moves: [...(evo2Data.moves || [])] });
-                }
-            } else if (teamMaxLv >= 15 && Math.random() < 0.50) {
-                const chain = await game.fetchEvoChain(wildId);
-                if (chain && chain.length >= 2) {
-                    const evo1Data = await game.fetchPokemon(chain[1]);
-                    if (evo1Data) Object.assign(wildPokeCopy, { ...evo1Data, moves: [...(evo1Data.moves || [])] });
-                }
+            // 플레이어의 팀 최고 레벨이 15 이상일 때만 진화형 등장 가능
+            if (teamMaxLv >= 30 && Math.random() < 0.30 && chain && chain.length >= 3) {
+                const evo2Data = await game.fetchPokemon(chain[2]);
+                if (evo2Data) wildPokeCopy = { ...evo2Data, moves: [...(evo2Data.moves || [])] };
+            } else if (teamMaxLv >= 15 && Math.random() < 0.50 && chain && chain.length >= 2) {
+                const evo1Data = await game.fetchPokemon(chain[1]);
+                if (evo1Data) wildPokeCopy = { ...evo1Data, moves: [...(evo1Data.moves || [])] };
             }
 
             wildPokeCopy.stats.hp = game.calculateMaxHP(wildPokeCopy.stats.baseHp, wildPokeCopy.level);

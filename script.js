@@ -89,7 +89,7 @@ var game = {
     },
 
     async fetchPokemon(id) {
-        if (this.state.pokeCache[id]) return this.state.pokeCache[id];
+        if (game.state.pokeCache[id]) return game.state.pokeCache[id];
         try {
             const res  = await fetch(`/api/pokeapi/pokemon/${id}`);
             if (!res.ok) throw new Error('API 오류');

@@ -1601,15 +1601,15 @@ body {
     gap: 6px;
 }
 .move-btn {
-    background: #444;
-    border: 3px solid #000;
+    background: #f0f0f0;
+    border: 3px solid #333;
     border-radius: 6px;
     padding: 10px 4px;
-    font-family: 'Press Start 2P', monospace;
-    font-size: 14px; /* 글자 크기 대폭 확대 */
-    font-weight: 900;
-    color: #fff;
-    text-shadow: 2px 2px 1px #000;
+    font-family: 'Noto Sans KR', sans-serif;
+    font-size: 22px; /* 글자 크기 대폭 확대 */
+    font-weight: 800;
+    color: #000; /* 글자 검은색 */
+    text-shadow: none; /* 픽셀 그림자 제거 */
     cursor: pointer;
     text-transform: capitalize;
     transition: background 0.15s;
@@ -1618,16 +1618,16 @@ body {
     align-items: center;
     justify-content: center;
 }
-.move-btn:hover:not(:disabled) { filter: brightness(1.2); }
+.move-btn:hover:not(:disabled) { background: #fff; border-color: var(--accent); }
 .move-btn:active { transform: scale(0.96); }
 .move-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .move-btn .m-name { display: block; line-height: 1.2; }
 .move-btn .m-info { display: none; } /* 공격력 정보 숨김 */
 
-.move-btn.type-fire { background-color: #F08030; }
-.move-btn.type-water { background-color: #6890F0; }
-.move-btn.type-grass { background-color: #78C850; }
+.move-btn.type-fire { background-color: #ffaa77; }
+.move-btn.type-water { background-color: #aaccff; }
+.move-btn.type-grass { background-color: #bbeeaa; }
 .move-btn.type-electric { background-color: #F8D030; color: #333; text-shadow: none; }
 .move-btn.type-ice { background-color: #98D8D8; color: #333; text-shadow: none; }
 .move-btn.type-fighting { background-color: #C03028; }

@@ -249,6 +249,8 @@ var game = {
             game.db.savePlayerData(game.state.player);
             game.ui.renderActiveTab();
         }
+        // EXP 바 즉시 업데이트 (레벨업 여부 관계없이)
+        game.ui.updateExpBar(pokemon);
         return leveledUp;
     },
 
@@ -332,13 +334,11 @@ var game = {
             const playerPoke = game.state.player?.team[0];
             if (!playerPoke) { game.ui.showToast("전투 가능한 포켓몬이 없습니다!"); return; }
 
-            // HP 초기화
             if (!playerPoke.currentHp || playerPoke.currentHp <= 0) {
                 playerPoke.currentHp = playerPoke.stats.hp;
             }
 
             const oppPoke = opponentTeam[0];
-            // stats가 없거나 hp가 없을 때 대비
             const oppHp = oppPoke?.stats?.hp || 100;
             const oppCurrentHp = oppPoke?.currentHp || oppHp;
 
@@ -509,7 +509,6 @@ var game = {
                     game.ui.log("패배했습니다...");
                     setTimeout(() => this.endBattle(false), 1500);
                 } else {
-                    // 상대 턴이 끝났으니 내 턴으로 전환
                     b.isPlayerTurn = true;
                     game.ui.renderMoveButtons();
                 }
@@ -604,7 +603,6 @@ var game = {
                         if (game.state.activeTab === 'pvp') game.ui.renderActiveTab();
                     }
                     if (data.type === 'challenged') {
-                        // 데이터를 JS 변수에 안전하게 저장
                         game.ui._pendingChallenge = {
                             challengerId: data.challengerId,
                             challengerName: data.challengerName,
@@ -613,7 +611,6 @@ var game = {
                         game.ui.showChallengeModal();
                     }
                     if (data.type === 'accepted') {
-                        // accepted 메시지에서 상대 정보 꺼내서 배틀 시작
                         game.battle.startPvpBattle(data.opponentId, data.opponentName, data.opponentTeam, true);
                     }
                     if (data.type === 'turn_action') {
@@ -940,7 +937,6 @@ var game = {
             `;
         },
 
-        // ── 도전장 모달: 데이터를 HTML 속성 대신 JS 변수에 저장 ──
         showChallengeModal() {
             const { challengerId, challengerName, challengerTeam } = game.ui._pendingChallenge || {};
             if (!challengerId) return;
@@ -977,9 +973,7 @@ var game = {
             const overlay = document.getElementById('challenge-overlay');
             if (overlay) overlay.remove();
 
-            // 수락 메시지 전송 (서버가 challenger에게 accepted 릴레이)
             game.network.send({ type: 'accept', challengerId });
-            // 수락한 쪽은 후공(isChallenger: false)으로 배틀 시작
             game.battle.startPvpBattle(challengerId, challengerName, challengerTeam, false);
         },
 
@@ -1217,6 +1211,22 @@ var game = {
             game.ui.showEvolutionEffect(p.nickname, p);
         },
 
+        // ── EXP 바 업데이트 (배틀 중 실시간 반영) ──
+        updateExpBar(pokemon) {
+            // 배틀 씬 EXP 바
+            const expFill = document.getElementById('p-exp-fill');
+            if (expFill && game.state.currentBattle?.playerPoke === pokemon) {
+                const expPct = Math.min(100, ((pokemon.exp || 0) / ((pokemon.level || 1) * 50)) * 100);
+                expFill.style.width = expPct + '%';
+            }
+            // 와일드 탭 lobby EXP 바 (배틀 외부)
+            const lobbyExpFill = document.querySelector('.exp-mini-fill');
+            if (lobbyExpFill) {
+                const expPct = Math.min(100, ((pokemon.exp || 0) / ((pokemon.level || 1) * 50)) * 100);
+                lobbyExpFill.style.width = expPct + '%';
+            }
+        },
+
         updateBattleUI() {
             const b = game.state.currentBattle;
             if (!b) return;
@@ -1238,6 +1248,13 @@ var game = {
             document.getElementById('p-hp-fill').style.width = ppHpPct + '%';
             document.getElementById('p-hp-fill').style.background = ppHpPct > 50 ? '#4caf50' : ppHpPct > 20 ? '#ff9800' : '#f44336';
             game.ui.loadSprite(document.getElementById('player-sprite'), pp.spriteUrls || game.getSpriteUrls(pp.id));
+
+            // ── EXP 바 업데이트 (핵심 수정) ──
+            const expFill = document.getElementById('p-exp-fill');
+            if (expFill) {
+                const expPct = Math.min(100, ((pp.exp || 0) / ((pp.level || 1) * 50)) * 100);
+                expFill.style.width = expPct + '%';
+            }
         },
 
         loadSprite(imgEl, urls) {

@@ -1420,5 +1420,17 @@
     "money": 0,
     "totalGames": 5,
     "lastLogin": "2026-05-19T00:15:21.329Z"
+  },
+  {
+    "id": "be6ea0d7-6d55-4acc-910d-313359cec067",
+    "name": "hajune",
+    "pw": "",
+    "team": [],
+    "box": [],
+    "pokedex": [],
+    "badges": [],
+    "money": 0,
+    "totalGames": 0,
+    "lastLogin": "2026-05-19T00:20:13.470Z"
   }
 ]

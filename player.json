@@ -1245,15 +1245,15 @@
         "spriteUrl": "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/7.png",
         "nickname": "꼬부기",
         "level": 5,
-        "currentHp": 49,
-        "exp": 95
+        "currentHp": 1,
+        "exp": 103
       }
     ],
     "box": [],
     "pokedex": [],
     "badges": [],
     "money": 0,
-    "totalGames": 3,
+    "totalGames": 4,
     "lastLogin": "2026-05-19T00:15:21.329Z"
   }
 ]

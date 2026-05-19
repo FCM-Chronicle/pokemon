@@ -1618,7 +1618,7 @@
         "spriteUrl": "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
         "nickname": "파이리",
         "level": 5,
-        "currentHp": 24,
+        "currentHp": 77,
         "exp": 161
       }
     ],
@@ -1626,7 +1626,7 @@
     "pokedex": [],
     "badges": [],
     "money": 0,
-    "totalGames": 12,
+    "totalGames": 13,
     "lastLogin": "2026-05-19T05:10:17.665Z"
   }
 ]

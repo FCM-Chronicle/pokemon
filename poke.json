@@ -628,6 +628,65 @@
     ],
     "spriteUrl": "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/7.png"
   },
+  "13": {
+    "id": 13,
+    "name": "뿔충이",
+    "nameEn": "weedle",
+    "types": [
+      "bug",
+      "poison"
+    ],
+    "stats": {
+      "hp": 78,
+      "attack": 35,
+      "defense": 30,
+      "special-attack": 20,
+      "special-defense": 20,
+      "speed": 50,
+      "baseHp": 40
+    },
+    "moves": [
+      {
+        "name": "일렉트릭네트",
+        "nameEn": "electroweb",
+        "power": 55,
+        "type": "electric",
+        "accuracy": 95,
+        "crit_chance": 0.0625
+      },
+      {
+        "name": "독침",
+        "nameEn": "poison-sting",
+        "power": 15,
+        "type": "poison",
+        "accuracy": 100,
+        "crit_chance": 0.0625
+      },
+      {
+        "name": "실뿜기",
+        "nameEn": "string-shot",
+        "power": 40,
+        "type": "bug",
+        "accuracy": 95,
+        "crit_chance": 0.0625
+      }
+    ],
+    "allMovePool": [
+      "bug-bite",
+      "electroweb",
+      "poison-sting",
+      "string-shot"
+    ],
+    "status": null,
+    "statusTurns": 0,
+    "spriteUrls": [
+      "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/13.png",
+      "https://unpkg.com/pokeapi-sprites@2.0.2/sprites/pokemon/other/official-artwork/13.png",
+      "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/13.png",
+      "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/13.png"
+    ],
+    "spriteUrl": "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/13.png"
+  },
   "19": {
     "id": 19,
     "name": "꼬렛",

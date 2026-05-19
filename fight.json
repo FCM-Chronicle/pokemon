@@ -1,4 +1,30 @@
 {
-  "ranking": [],
-  "battleLog": []
+  "ranking": [
+    {
+      "playerId": "dcb4b09a-fa11-4fe3-80a1-2dcfd1e81e75",
+      "playerName": "ljij",
+      "win": 1,
+      "lose": 0,
+      "totalBattles": 1,
+      "winRate": "100.00",
+      "lastUpdated": "2026-05-19T00:14:52.923Z"
+    },
+    {
+      "playerId": "7edd51fb-ff54-49a4-9278-90da9631dcca",
+      "playerName": "dldldl",
+      "win": 0,
+      "lose": 1,
+      "totalBattles": 1,
+      "winRate": "0.00",
+      "lastUpdated": "2026-05-19T00:14:52.923Z"
+    }
+  ],
+  "battleLog": [
+    {
+      "battleId": "665f70ab-a525-4e2a-bb1e-11e11ccd7970",
+      "winner": "ljij",
+      "loser": "dldldl",
+      "timestamp": "2026-05-19T00:14:52.923Z"
+    }
+  ]
 }

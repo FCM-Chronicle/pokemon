@@ -9,6 +9,7 @@ var game = {
         evoChainCache: {},
         onlinePlayers: [],
         rankings: [],
+        currentZone: 0, // 0~4: 초원, 숲, 산악, 동굴, 심층
         typeChart: {
             fire: { grass: 2, ice: 2, bug: 2, steel: 2, water: 0.5, fire: 0.5, rock: 0.5, dragon: 0.5 },
             water: { fire: 2, ground: 2, rock: 2, water: 0.5, grass: 0.5, dragon: 0.5 },
@@ -212,15 +213,17 @@ var game = {
         return true;
     },
 
-    getWildPokemonId(playerMaxLevel) {
-        const lv = playerMaxLevel || 5;
-        let maxId;
-        if (lv < 15) maxId = 50;
-        else if (lv < 30) maxId = 151;
-        else if (lv < 50) maxId = 251;
-        else if (lv < 70) maxId = 386;
-        else maxId = 493;
-        return Math.floor(Math.random() * maxId) + 1;
+    zones: [
+        { name: '초원',   emoji: '🌿', minId: 1,   maxId: 50  },
+        { name: '숲',     emoji: '🌲', minId: 1,   maxId: 151 },
+        { name: '산악',   emoji: '⛰️', minId: 152, maxId: 251 },
+        { name: '동굴',   emoji: '🕳️', minId: 252, maxId: 386 },
+        { name: '심층',   emoji: '🌌', minId: 387, maxId: 493 },
+    ],
+
+    getWildPokemonId() {
+        const zone = game.zones[game.state.currentZone];
+        return Math.floor(Math.random() * (zone.maxId - zone.minId + 1)) + zone.minId;
     },
 
     getTeamMaxLevel() {
@@ -281,7 +284,7 @@ var game = {
             if (!playerPoke) { game.ui.showToast("전투 가능한 포켓몬이 없습니다!"); return; }
 
             const teamMaxLv = game.getTeamMaxLevel();
-            let wildId = game.getWildPokemonId(teamMaxLv);
+            let wildId = game.getWildPokemonId();
             const chain = await game.fetchEvoChain(wildId);
             if (chain && chain.length > 0) wildId = chain[0];
 
@@ -681,13 +684,7 @@ var game = {
             const player = game.state.player;
             const team = player?.team || [];
             const leadPoke = team[0];
-            const pLv = leadPoke?.level || 5;
-
-            let zoneText = '초원 (1세대)';
-            if (pLv >= 15 && pLv < 30) zoneText = '숲 (1세대 전체)';
-            else if (pLv >= 30 && pLv < 50) zoneText = '산악 (2세대)';
-            else if (pLv >= 50 && pLv < 70) zoneText = '동굴 (3세대)';
-            else if (pLv >= 70) zoneText = '심층 (4세대)';
+            const zone = game.zones[game.state.currentZone];
 
             container.innerHTML = `
                 <div class="tab-content wild-tab">
@@ -697,7 +694,7 @@ var game = {
                             <div class="grass-layer l2"></div>
                         </div>
                         <div class="scene-content">
-                            <div class="zone-badge">📍 ${zoneText}</div>
+                            <div class="zone-badge">📍 ${zone.emoji} ${zone.name}</div>
                             <div class="player-stats-bar">
                                 <div class="stat-item">💰 <strong>${player.money || 0}</strong></div>
                                 <div class="stat-item">🎮 <strong>${player.totalGames || 0}</strong> Games</div>
@@ -729,11 +726,19 @@ var game = {
                                     </div>
                                 ` : `<div class="no-poke-msg">포켓몬이 없습니다!</div>`}
                             </div>
+                            <div class="zone-select-row">
+                                ${game.zones.map((z, i) => `
+                                    <button class="zone-btn ${i === game.state.currentZone ? 'active' : ''}"
+                                        onclick="game.state.currentZone=${i}; game.ui.renderActiveTab();">
+                                        ${z.emoji} ${z.name}
+                                    </button>
+                                `).join('')}
+                            </div>
                             <div class="wild-actions">
                                 <button class="btn-wild-battle pixel" onclick="game.battle.startWildBattle()">
-                                    <span>🌿 야생 포켓몬 만나기</span>
+                                    <span>${zone.emoji} 야생 포켓몬 만나기</span>
                                 </button>
-                                <p class="wild-hint">4세대 493종의 포켓몬이 기다리고 있다!</p>
+                                <p class="wild-hint">${zone.name} 지역 포켓몬이 나타난다! (#${zone.minId}~${zone.maxId})</p>
                             </div>
                         </div>
                     </div>

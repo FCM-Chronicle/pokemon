@@ -628,6 +628,73 @@
     ],
     "spriteUrl": "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/7.png"
   },
+  "10": {
+    "id": 10,
+    "name": "캐터피",
+    "nameEn": "caterpie",
+    "types": [
+      "bug"
+    ],
+    "stats": {
+      "hp": 85,
+      "attack": 30,
+      "defense": 35,
+      "special-attack": 20,
+      "special-defense": 20,
+      "speed": 45,
+      "baseHp": 45
+    },
+    "moves": [
+      {
+        "name": "실뿜기",
+        "nameEn": "string-shot",
+        "power": 40,
+        "type": "bug",
+        "accuracy": 95,
+        "crit_chance": 0.0625
+      },
+      {
+        "name": "몸통박치기",
+        "nameEn": "tackle",
+        "power": 40,
+        "type": "normal",
+        "accuracy": 100,
+        "crit_chance": 0.0625
+      },
+      {
+        "name": "일렉트릭네트",
+        "nameEn": "electroweb",
+        "power": 55,
+        "type": "electric",
+        "accuracy": 95,
+        "crit_chance": 0.0625
+      },
+      {
+        "name": "코골기",
+        "nameEn": "snore",
+        "power": 50,
+        "type": "normal",
+        "accuracy": 100,
+        "crit_chance": 0.0625
+      }
+    ],
+    "allMovePool": [
+      "string-shot",
+      "tackle",
+      "electroweb",
+      "snore",
+      "bug-bite"
+    ],
+    "status": null,
+    "statusTurns": 0,
+    "spriteUrls": [
+      "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/10.png",
+      "https://unpkg.com/pokeapi-sprites@2.0.2/sprites/pokemon/other/official-artwork/10.png",
+      "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/10.png",
+      "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/10.png"
+    ],
+    "spriteUrl": "https://cdn.jsdelivr.net/gh/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/10.png"
+  },
   "13": {
     "id": 13,
     "name": "뿔충이",
